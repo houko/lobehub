@@ -1,0 +1,430 @@
+import type {
+  AgentEventAdapter,
+  HeterogeneousAgentEvent,
+  HeterogeneousTerminalErrorData,
+  StepCompleteData,
+  StreamChunkData,
+  StreamStartData,
+  SubagentEventContext,
+  ToolCallPayload,
+  ToolResultData,
+  UsageData,
+} from '../types';
+
+/** Adapter key in the runtime registry, and the `provider` reported on `step_complete`. */
+const DSH_IDENTIFIER = 'deepseek-harness';
+
+/**
+ * JSON-RPC notification methods the `dsh-jsonrpc` runtime sends. Requests
+ * (`initialize` / `session/prompt` / `shutdown`) are the session layer's
+ * business — the adapter only reads the server-to-client stream.
+ */
+const SESSION_EVENT = 'session.event';
+const SESSION_STATUS = 'session.status';
+const SUBAGENT_STARTED = 'subagent.started';
+
+/**
+ * DeepSeek Harness token counts are DISJOINT: `inputTokens` excludes cache
+ * reads and writes, so billed input is the sum of the three. `outputTokens`
+ * follows the OpenAI convention and INCLUDES `reasoningTokens`, so the text
+ * portion is the difference — do not add them.
+ */
+const toUsageData = (usage: any): UsageData | undefined => {
+  if (!usage || typeof usage !== 'object') return undefined;
+
+  const finite = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+  const input = finite(usage.inputTokens);
+  const cacheRead = finite(usage.cacheReadTokens);
+  const cacheWrite = finite(usage.cacheWriteTokens);
+  const output = finite(usage.outputTokens);
+  const reasoning = finite(usage.reasoningTokens);
+  const totalInput = input + cacheRead + cacheWrite;
+
+  return {
+    inputCachedTokens: cacheRead,
+    inputCacheMissTokens: input,
+    inputWriteCacheTokens: cacheWrite,
+    outputReasoningTokens: reasoning,
+    outputTextTokens: Math.max(output - reasoning, 0),
+    totalInputTokens: totalInput,
+    totalOutputTokens: output,
+    totalTokens: totalInput + output,
+  };
+};
+
+/** Flatten harness content blocks into the plain text LobeHub persists on a tool message. */
+const flattenBlocks = (blocks: unknown): string => {
+  if (!Array.isArray(blocks)) return '';
+  return blocks
+    .map((block: any) => {
+      if (block?.type === 'text' || block?.type === 'reasoning') return block.text ?? '';
+      if (block?.type === 'image') return '[Image]';
+      return '';
+    })
+    .filter(Boolean)
+    .join('');
+};
+
+/** Per-child bookkeeping for a delegated session, keyed by the child session id. */
+interface SubagentLink {
+  parentToolCallId: string;
+  /** Cleared once the spawn metadata has ridden out on the first child event. */
+  pendingSpawn: boolean;
+  spawnMetadata?: { description?: string; prompt?: string; subagentType?: string };
+}
+
+/**
+ * Maps the DeepSeek Harness SDK runtime protocol (`@deepseek-ai/dsh-jsonrpc`)
+ * into shared stream events.
+ *
+ * Unlike the CLI adapters, the harness does not print a bespoke JSONL dialect:
+ * it streams its own **session log** verbatim over newline-delimited JSON-RPC,
+ * one `session.event` notification per appended log event. Raw
+ * `assistant/chunk` deltas are part of that stream, so token-level output maps
+ * across without an assembly pass here.
+ *
+ * `adapt` consumes parsed JSON-RPC frames. The session layer owns the
+ * handshake and the prompt request; everything below is server-to-client.
+ *
+ * Two harness traits shape this mapping:
+ *
+ * 1. `session.event` carries **every session in the runtime**, not just the one
+ *    we prompted — including delegated subagent sessions. The first session id
+ *    seen becomes the root; a session linked by `subagent.started` is stamped
+ *    with {@link SubagentEventContext}; anything else is dropped.
+ * 2. The harness event vocabulary is merge-extensible by design (plugins add
+ *    event types, content blocks, and finish reasons via declaration merging),
+ *    and the wire format carries no compatibility promise pre-release.
+ *    Every switch here therefore falls through unknown tags silently rather
+ *    than asserting an exhaustive union.
+ */
+export class DshAdapter implements AgentEventAdapter {
+  /** Root harness session id — reported for `--resume`-style continuation. */
+  sessionId?: string;
+
+  private finished = false;
+  private route?: { model?: string; provider?: string };
+  private stepCounter = 0;
+  private stepIndex = 0;
+  private streamOpen = false;
+  private terminalErrorEmitted = false;
+
+  /** Last dispatched tool call per session — correlates `subagent.started` to its spawning call. */
+  private lastToolCallBySession = new Map<string, string>();
+  private subagentByChildSession = new Map<string, SubagentLink>();
+  private toolPayloadById = new Map<string, ToolCallPayload>();
+
+  adapt(raw: any): HeterogeneousAgentEvent[] {
+    if (!raw || typeof raw !== 'object') return [];
+
+    switch (raw.method) {
+      case SESSION_EVENT: {
+        return this.handleSessionEvent(raw.params);
+      }
+      case SESSION_STATUS: {
+        return this.handleStatus(raw.params);
+      }
+      case SUBAGENT_STARTED: {
+        this.linkSubagent(raw.params);
+        return [];
+      }
+      // `subagent.finished`, responses, and unknown methods carry nothing the
+      // stream needs — the child's own session events already told the story.
+      default: {
+        return [];
+      }
+    }
+  }
+
+  flush(): HeterogeneousAgentEvent[] {
+    const events: HeterogeneousAgentEvent[] = [];
+    if (this.streamOpen) {
+      this.streamOpen = false;
+      events.push(this.makeEvent('stream_end', {}));
+    }
+    if (!this.finished) {
+      this.finished = true;
+      events.push(this.makeEvent('agent_runtime_end', {}));
+    }
+    return events;
+  }
+
+  private handleSessionEvent(params: any): HeterogeneousAgentEvent[] {
+    const sessionId = params?.sessionId;
+    const event = params?.event;
+    if (typeof sessionId !== 'string' || !event || typeof event.type !== 'string') return [];
+
+    if (!this.sessionId) this.sessionId = sessionId;
+
+    const isRoot = sessionId === this.sessionId;
+    const subagent = isRoot ? undefined : this.subagentContextFor(sessionId);
+    // A session that is neither the root nor a linked child belongs to another
+    // client of the same runtime.
+    if (!isRoot && !subagent) return [];
+
+    const data = event.data ?? {};
+
+    switch (event.type) {
+      case 'assistant/chunk': {
+        return this.handleChunk(data.chunk, subagent);
+      }
+      case 'assistant/message': {
+        return this.handleAssistantMessage(data, subagent);
+      }
+      // Route metadata is logged only when the provider/model pair changes, so
+      // cache it for the `stream_start` and `step_complete` that follow.
+      case 'request/context': {
+        this.route = { model: data.model, provider: data.provider };
+        return [];
+      }
+      case 'step/start': {
+        return this.handleStepStart(subagent);
+      }
+      case 'tool/call': {
+        return this.handleToolCall(sessionId, data, subagent);
+      }
+      case 'tool/result': {
+        return this.handleToolResult(data, subagent);
+      }
+      case 'turn/end': {
+        return this.handleTurnEnd(data, subagent);
+      }
+      default: {
+        return [];
+      }
+    }
+  }
+
+  /**
+   * One harness step is one model call, which is one LobeHub assistant message.
+   * A subagent step stays inside the parent's step: its output is stamped and
+   * routed to the child Thread, so opening a second main stream would split the
+   * parent's assistant message in half.
+   */
+  private handleStepStart(subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
+    if (subagent) return [];
+
+    const events: HeterogeneousAgentEvent[] = [];
+    if (this.streamOpen) {
+      this.streamOpen = false;
+      events.push(this.makeEvent('stream_end', {}));
+    }
+
+    this.stepIndex = this.stepCounter;
+    this.stepCounter += 1;
+    this.streamOpen = true;
+
+    const data: StreamStartData = {
+      model: this.route?.model,
+      provider: DSH_IDENTIFIER,
+      sessionId: this.sessionId,
+    };
+    events.push(this.makeEvent('stream_start', data));
+    return events;
+  }
+
+  private handleChunk(chunk: any, subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
+    if (!chunk || typeof chunk.type !== 'string') return [];
+
+    switch (chunk.type) {
+      case 'block-end': {
+        // Tool-call arguments are only complete once the block closes; the
+        // per-delta fragments carry no independently useful state.
+        const block = chunk.block;
+        if (block?.type !== 'tool-call') return [];
+        const payload = this.registerToolCall(block.id, block.name, block.arguments);
+        return [this.makeChunk({ chunkType: 'tools_calling', toolsCalling: [payload] }, subagent)];
+      }
+      case 'finish': {
+        return this.handleFinish(chunk.reason);
+      }
+      case 'reasoning-delta': {
+        if (!chunk.text) return [];
+        return [this.makeChunk({ chunkType: 'reasoning', reasoning: chunk.text }, subagent)];
+      }
+      case 'text-delta': {
+        if (!chunk.text) return [];
+        return [this.makeChunk({ chunkType: 'text', content: chunk.text }, subagent)];
+      }
+      // `usage` rides on the `assistant/message` that follows a successful call;
+      // `block-start` and the delta fragments of an assembled block add nothing.
+      default: {
+        return [];
+      }
+    }
+  }
+
+  /**
+   * A failed or aborted attempt produces a terminal finish with no
+   * `assistant/message`, so the error has to come off the chunk stream.
+   */
+  private handleFinish(reason: any): HeterogeneousAgentEvent[] {
+    if (reason?.kind !== 'error' && reason?.kind !== 'aborted') return [];
+    return this.terminalError(reason.failure, reason.kind);
+  }
+
+  private handleAssistantMessage(
+    data: any,
+    subagent?: SubagentEventContext,
+  ): HeterogeneousAgentEvent[] {
+    if (subagent) return [];
+
+    const events: HeterogeneousAgentEvent[] = [];
+    if (this.streamOpen) {
+      this.streamOpen = false;
+      events.push(this.makeEvent('stream_end', {}));
+    }
+
+    const usage = toUsageData(data?.usage);
+    const stepComplete: StepCompleteData = {
+      model: this.route?.model,
+      phase: 'turn_metadata',
+      // The hetero contract keys pricing on the wrapping runtime, not the
+      // wrapped model's vendor.
+      provider: DSH_IDENTIFIER,
+      ...(usage ? { usage } : {}),
+    };
+    events.push(this.makeEvent('step_complete', stepComplete));
+    return events;
+  }
+
+  private handleToolCall(
+    sessionId: string,
+    data: any,
+    subagent?: SubagentEventContext,
+  ): HeterogeneousAgentEvent[] {
+    if (!data?.callId) return [];
+
+    this.lastToolCallBySession.set(sessionId, data.callId);
+    const toolCalling = this.registerToolCall(data.callId, data.name, data.arguments);
+
+    const startData: Record<string, unknown> = { toolCalling };
+    if (subagent) startData.subagent = subagent;
+    return [this.makeEvent('tool_start', startData)];
+  }
+
+  private handleToolResult(data: any, subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
+    const block = data?.message?.content?.[0];
+    const toolCallId = block?.toolCallId ?? data?.callId;
+    if (!toolCallId) return [];
+
+    const isError = Boolean(block?.isError ?? data?.error);
+    const content = flattenBlocks(block?.content);
+
+    const resultData: ToolResultData = { content, toolCallId, ...(isError ? { isError } : {}) };
+    if (subagent) resultData.subagent = subagent;
+
+    const endData: Record<string, unknown> = { isSuccess: !isError, toolCallId };
+    const toolCalling = this.toolPayloadById.get(toolCallId);
+    if (toolCalling) endData.payload = { toolCalling };
+    endData.result = { content, success: !isError };
+    if (subagent) endData.subagent = subagent;
+
+    return [this.makeEvent('tool_result', resultData), this.makeEvent('tool_end', endData)];
+  }
+
+  private handleTurnEnd(data: any, subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
+    if (subagent) return [];
+
+    const events: HeterogeneousAgentEvent[] = [];
+    if (data?.reason?.kind === 'error') {
+      events.push(...this.terminalError(data.reason.error, 'error'));
+    }
+    if (this.streamOpen) {
+      this.streamOpen = false;
+      events.push(this.makeEvent('stream_end', {}));
+    }
+    events.push(this.makeEvent('visible_output_end', {}));
+    return events;
+  }
+
+  /**
+   * The runtime reports whole-agent idle, which is the only signal that the
+   * prompt's work — including any continuation the loop scheduled itself — is
+   * done. The session layer stops reading here.
+   */
+  private handleStatus(params: any): HeterogeneousAgentEvent[] {
+    if (params?.sessionId !== this.sessionId || params?.status !== 'idle') return [];
+    if (this.finished) return [];
+    this.finished = true;
+    return [this.makeEvent('agent_runtime_end', {})];
+  }
+
+  /**
+   * `subagent.started` names the parent and child sessions but not the tool
+   * call that delegated, so the link is the parent's most recent dispatched
+   * call. That holds while the harness dispatches delegation calls
+   * exclusively; a parallel batch containing two delegations would mislink.
+   * Correlating exactly needs `parentToolCallId` on the notification.
+   */
+  private linkSubagent(params: any): void {
+    const { childSessionId, parentSessionId } = params ?? {};
+    if (typeof childSessionId !== 'string' || typeof parentSessionId !== 'string') return;
+
+    const parentToolCallId = this.lastToolCallBySession.get(parentSessionId);
+    if (!parentToolCallId) return;
+
+    const spawningCall = this.toolPayloadById.get(parentToolCallId);
+    this.subagentByChildSession.set(childSessionId, {
+      parentToolCallId,
+      pendingSpawn: true,
+      spawnMetadata: {
+        description: spawningCall?.apiName,
+        prompt: spawningCall?.arguments,
+      },
+    });
+  }
+
+  private subagentContextFor(sessionId: string): SubagentEventContext | undefined {
+    const link = this.subagentByChildSession.get(sessionId);
+    if (!link) return undefined;
+
+    const context: SubagentEventContext = { parentToolCallId: link.parentToolCallId };
+    if (link.pendingSpawn) {
+      link.pendingSpawn = false;
+      if (link.spawnMetadata) context.spawnMetadata = link.spawnMetadata;
+    }
+    return context;
+  }
+
+  private registerToolCall(id: string, name: string, args: unknown): ToolCallPayload {
+    const existing = this.toolPayloadById.get(id);
+    if (existing) return existing;
+
+    const payload: ToolCallPayload = {
+      apiName: name,
+      arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}),
+      id,
+      identifier: name,
+      type: 'default',
+    };
+    this.toolPayloadById.set(id, payload);
+    return payload;
+  }
+
+  private terminalError(failure: any, kind: string): HeterogeneousAgentEvent[] {
+    if (this.terminalErrorEmitted) return [];
+    this.terminalErrorEmitted = true;
+
+    const data: HeterogeneousTerminalErrorData = {
+      agentType: DSH_IDENTIFIER,
+      code: failure?.code,
+      details: { finishKind: kind, ...(failure?.status ? { status: failure.status } : {}) },
+      message: failure?.message ?? 'DeepSeek Harness execution failed',
+    };
+    return [this.makeEvent('error', data)];
+  }
+
+  private makeChunk(
+    data: StreamChunkData,
+    subagent?: SubagentEventContext,
+  ): HeterogeneousAgentEvent {
+    return this.makeEvent('stream_chunk', subagent ? { ...data, subagent } : data);
+  }
+
+  private makeEvent(type: HeterogeneousAgentEvent['type'], data: unknown): HeterogeneousAgentEvent {
+    return { data, stepIndex: this.stepIndex, timestamp: Date.now(), type };
+  }
+}
