@@ -145,6 +145,38 @@ describe('DshAdapter', () => {
     });
   });
 
+  it('reports a retried request as stream_retry, not a run failure', () => {
+    const adapter = new DshAdapter();
+    adapter.adapt(sessionEvent('s1', 'step/start', { step: 1, turn: 1 }));
+
+    // A failed attempt the retry plugin recovers arrives as a terminal `finish`
+    // chunk. Reporting it as `error` puts a failure card on a run that succeeds.
+    expect(
+      adapter.adapt(
+        sessionEvent('s1', 'assistant/chunk', {
+          chunk: {
+            reason: { failure: { code: 'TIMEOUT', message: 'timed out' }, kind: 'error' },
+            type: 'finish',
+          },
+        }),
+      ),
+    ).toEqual([]);
+
+    const retry = adapter.adapt(
+      sessionEvent('s1', 'llm/retry', {
+        delayMs: 1000,
+        failure: { code: 'TIMEOUT', message: 'timed out' },
+        maxRetries: 3,
+        mode: 'normal',
+        retry: 1,
+        step: 1,
+        turn: 1,
+      }),
+    );
+    expect(retry.map(({ type }) => type)).toEqual(['stream_retry']);
+    expect(retry[0].data).toMatchObject({ attempt: 1, delayMs: 1000, maxAttempts: 3 });
+  });
+
   it('drops sessions belonging to other clients of the same runtime', () => {
     const adapter = new DshAdapter();
     adapter.adapt(sessionEvent('mine', 'step/start', { step: 1, turn: 1 }));

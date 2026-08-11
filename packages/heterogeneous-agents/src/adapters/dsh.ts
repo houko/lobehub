@@ -225,6 +225,22 @@ export class DshAdapter implements AgentEventAdapter {
         if (config) this.route = { model: config.model, provider: config.provider };
         return [];
       }
+      // `dsh-llm-retry` records the wait before re-attempting a failed request.
+      // Surfacing it keeps the renderer from showing a silent stall — and it is
+      // why a terminal `finish` chunk must not be reported as a run failure.
+      case 'llm/retry': {
+        if (subagent) return [];
+        return [
+          this.makeEvent('stream_retry', {
+            agentType: DSH_IDENTIFIER,
+            attempt: data.retry,
+            delayMs: data.delayMs,
+            error: data.failure?.message,
+            ...(data.maxRetries === undefined ? {} : { maxAttempts: data.maxRetries }),
+            provider: DSH_IDENTIFIER,
+          }),
+        ];
+      }
       case 'step/start': {
         return this.handleStepStart(subagent);
       }
@@ -308,8 +324,10 @@ export class DshAdapter implements AgentEventAdapter {
           this.makeChunk({ chunkType: 'tools_calling', toolsCalling: [payload] }, subagent),
         ];
       }
+      // A terminal `finish` is NOT a terminal run failure: `dsh-llm-retry` can
+      // recover the attempt and the turn continues. `turn/end` owns the verdict.
       case 'finish': {
-        return this.handleFinish(chunk.reason);
+        return [];
       }
       case 'reasoning-delta': {
         if (!chunk.text) return [];
@@ -331,15 +349,6 @@ export class DshAdapter implements AgentEventAdapter {
         return [];
       }
     }
-  }
-
-  /**
-   * A failed or aborted attempt produces a terminal finish with no
-   * `assistant/message`, so the error has to come off the chunk stream.
-   */
-  private handleFinish(reason: any): HeterogeneousAgentEvent[] {
-    if (reason?.kind !== 'error' && reason?.kind !== 'aborted') return [];
-    return this.terminalError(reason.failure, reason.kind);
   }
 
   private handleAssistantMessage(
