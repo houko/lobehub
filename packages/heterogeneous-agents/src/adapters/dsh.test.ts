@@ -177,6 +177,63 @@ describe('DshAdapter', () => {
     expect(retry[0].data).toMatchObject({ attempt: 1, delayMs: 1000, maxAttempts: 3 });
   });
 
+  it('forwards a model-generated session title and skips the deterministic fallback', () => {
+    const adapter = new DshAdapter();
+    adapter.adapt(sessionEvent('s1', 'step/start', { step: 1, turn: 1 }));
+
+    // The harness fallback is a truncation of the first user message — worse
+    // than the consumer's own summarization, so it must not cross.
+    expect(
+      adapter.adapt(
+        sessionEvent('s1', 'session/title', {
+          messageSeqs: [4],
+          source: { kind: 'fallback' },
+          title: 'Read the file and',
+        }),
+      ),
+    ).toEqual([]);
+
+    const generated = adapter.adapt(
+      sessionEvent('s1', 'session/title', {
+        messageSeqs: [4],
+        source: { kind: 'provider', provider: 'llm' },
+        title: 'Document the turn lifecycle',
+      }),
+    );
+    expect(generated.map(({ type }) => type)).toEqual(['session_title']);
+    expect(generated[0].data).toEqual({ origin: 'model', title: 'Document the turn lifecycle' });
+
+    const renamed = adapter.adapt(
+      sessionEvent('s1', 'session/title', {
+        messageSeqs: [],
+        source: { kind: 'user' },
+        title: 'My thread',
+      }),
+    );
+    expect(renamed[0].data).toEqual({ origin: 'user', title: 'My thread' });
+  });
+
+  it('drops a subagent session title, which describes the subtask', () => {
+    const adapter = new DshAdapter();
+    adapter.adapt(sessionEvent('parent', 'step/start', { step: 1, turn: 1 }));
+    adapter.adapt(
+      sessionEvent('parent', 'tool/call', { arguments: '{}', callId: 'c1', name: 'subagent' }),
+    );
+    adapter.adapt(
+      notify('subagent.started', { childSessionId: 'child', parentSessionId: 'parent' }),
+    );
+
+    expect(
+      adapter.adapt(
+        sessionEvent('child', 'session/title', {
+          messageSeqs: [1],
+          source: { kind: 'provider', provider: 'llm' },
+          title: 'echo probe subtask',
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it('drops sessions belonging to other clients of the same runtime', () => {
     const adapter = new DshAdapter();
     adapter.adapt(sessionEvent('mine', 'step/start', { step: 1, turn: 1 }));

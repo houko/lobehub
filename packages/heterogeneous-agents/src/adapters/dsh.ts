@@ -2,6 +2,7 @@ import type {
   AgentEventAdapter,
   HeterogeneousAgentEvent,
   HeterogeneousTerminalErrorData,
+  SessionTitleData,
   StepCompleteData,
   StreamChunkData,
   StreamStartData,
@@ -244,6 +245,13 @@ export class DshAdapter implements AgentEventAdapter {
       case 'step/start': {
         return this.handleStepStart(subagent);
       }
+      // The harness titles its own sessions, so the consumer can skip its own
+      // summarization call. A delegated child titles its own session too; that
+      // title describes the subtask, not the conversation.
+      case 'session/title': {
+        if (subagent) return [];
+        return this.handleTitle(data);
+      }
       // The delegated child logs its own descriptor, whose `label` is the
       // human-readable spawn title — better than the delegating tool's name.
       case 'subagent/descriptor': {
@@ -349,6 +357,24 @@ export class DshAdapter implements AgentEventAdapter {
         return [];
       }
     }
+  }
+
+  /**
+   * The harness records three title sources. `fallback` is a deterministic
+   * truncation of the first user message, which is worse than the consumer's
+   * own summarization — forwarding it would downgrade the title, so only a
+   * provider-generated or user-set title crosses.
+   */
+  private handleTitle(data: any): HeterogeneousAgentEvent[] {
+    const kind = data?.source?.kind;
+    if (typeof data?.title !== 'string' || !data.title) return [];
+    if (kind !== 'provider' && kind !== 'user') return [];
+
+    const payload: SessionTitleData = {
+      origin: kind === 'user' ? 'user' : 'model',
+      title: data.title,
+    };
+    return [this.makeEvent('session_title', payload)];
   }
 
   private handleAssistantMessage(
