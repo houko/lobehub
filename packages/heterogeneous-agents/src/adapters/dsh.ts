@@ -67,6 +67,24 @@ const flattenBlocks = (blocks: unknown): string => {
     .join('');
 };
 
+/**
+ * Pull the child's opening prompt out of the delegating call's raw arguments so
+ * the child Thread seeds a readable user message instead of a JSON blob. The
+ * arguments are the model's unparsed output, so malformed JSON is expected and
+ * falls back to the raw string.
+ */
+const extractPrompt = (args: string | undefined): string | undefined => {
+  if (!args) return undefined;
+  try {
+    const parsed = JSON.parse(args);
+    const prompt = parsed?.prompt ?? parsed?.task ?? parsed?.input;
+    return typeof prompt === 'string' ? prompt : args;
+  } catch {
+    // Model-produced JSON; an unparsable payload still reads better raw than dropped.
+    return args;
+  }
+};
+
 /** Per-child bookkeeping for a delegated session, keyed by the child session id. */
 interface SubagentLink {
   parentToolCallId: string;
@@ -105,6 +123,8 @@ export class DshAdapter implements AgentEventAdapter {
   sessionId?: string;
 
   private finished = false;
+  /** A step has opened but has produced no output yet, so its stream is unopened. */
+  private pendingStream = false;
   private route?: { model?: string; provider?: string };
   private stepCounter = 0;
   private stepIndex = 0;
@@ -139,11 +159,7 @@ export class DshAdapter implements AgentEventAdapter {
   }
 
   flush(): HeterogeneousAgentEvent[] {
-    const events: HeterogeneousAgentEvent[] = [];
-    if (this.streamOpen) {
-      this.streamOpen = false;
-      events.push(this.makeEvent('stream_end', {}));
-    }
+    const events: HeterogeneousAgentEvent[] = this.closeStream();
     if (!this.finished) {
       this.finished = true;
       events.push(this.makeEvent('agent_runtime_end', {}));
@@ -165,22 +181,52 @@ export class DshAdapter implements AgentEventAdapter {
     if (!isRoot && !subagent) return [];
 
     const data = event.data ?? {};
+    const events = this.routeSessionEvent(event.type, data, sessionId, subagent);
 
-    switch (event.type) {
+    // Spawn metadata must ride the first EMITTED child event, not merely the
+    // first child event seen: a child session opens with lifecycle frames
+    // (`turn/start`, `subagent/descriptor`) that map to nothing, and the
+    // executor needs the metadata to create the child Thread.
+    if (subagent && events.length > 0) this.attachSpawnMetadata(sessionId, events[0]);
+    return events;
+  }
+
+  private routeSessionEvent(
+    type: string,
+    data: any,
+    sessionId: string,
+    subagent?: SubagentEventContext,
+  ): HeterogeneousAgentEvent[] {
+    switch (type) {
       case 'assistant/chunk': {
         return this.handleChunk(data.chunk, subagent);
       }
       case 'assistant/message': {
         return this.handleAssistantMessage(data, subagent);
       }
-      // Route metadata is logged only when the provider/model pair changes, so
-      // cache it for the `stream_start` and `step_complete` that follow.
+      // Every request logs its header inside the step before dispatch, so this
+      // is the reliable route source. `request/context` repeats the pair but is
+      // logged only when the route changes, which skips later same-route steps.
       case 'request/context': {
         this.route = { model: data.model, provider: data.provider };
         return [];
       }
+      case 'request/header': {
+        const config = data.header?.config;
+        if (config) this.route = { model: config.model, provider: config.provider };
+        return [];
+      }
       case 'step/start': {
         return this.handleStepStart(subagent);
+      }
+      // The delegated child logs its own descriptor, whose `label` is the
+      // human-readable spawn title — better than the delegating tool's name.
+      case 'subagent/descriptor': {
+        const link = this.subagentByChildSession.get(sessionId);
+        if (link?.pendingSpawn && data.label) {
+          link.spawnMetadata = { ...link.spawnMetadata, description: data.label };
+        }
+        return [];
       }
       case 'tool/call': {
         return this.handleToolCall(sessionId, data, subagent);
@@ -202,18 +248,25 @@ export class DshAdapter implements AgentEventAdapter {
    * A subagent step stays inside the parent's step: its output is stamped and
    * routed to the child Thread, so opening a second main stream would split the
    * parent's assistant message in half.
+   *
+   * The step only opens a pending slot here. `stream_start` has to carry the
+   * provider/model route, and the harness logs the route in the `request/header`
+   * it appends INSIDE the step, after `step/start` and before dispatch — so the
+   * stream is opened lazily by the step's first output instead.
    */
   private handleStepStart(subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
     if (subagent) return [];
 
-    const events: HeterogeneousAgentEvent[] = [];
-    if (this.streamOpen) {
-      this.streamOpen = false;
-      events.push(this.makeEvent('stream_end', {}));
-    }
-
+    const events = this.closeStream();
     this.stepIndex = this.stepCounter;
     this.stepCounter += 1;
+    this.pendingStream = true;
+    return events;
+  }
+
+  private openStreamIfPending(): HeterogeneousAgentEvent[] {
+    if (!this.pendingStream) return [];
+    this.pendingStream = false;
     this.streamOpen = true;
 
     const data: StreamStartData = {
@@ -221,8 +274,14 @@ export class DshAdapter implements AgentEventAdapter {
       provider: DSH_IDENTIFIER,
       sessionId: this.sessionId,
     };
-    events.push(this.makeEvent('stream_start', data));
-    return events;
+    return [this.makeEvent('stream_start', data)];
+  }
+
+  private closeStream(): HeterogeneousAgentEvent[] {
+    this.pendingStream = false;
+    if (!this.streamOpen) return [];
+    this.streamOpen = false;
+    return [this.makeEvent('stream_end', {})];
   }
 
   private handleChunk(chunk: any, subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
@@ -235,18 +294,27 @@ export class DshAdapter implements AgentEventAdapter {
         const block = chunk.block;
         if (block?.type !== 'tool-call') return [];
         const payload = this.registerToolCall(block.id, block.name, block.arguments);
-        return [this.makeChunk({ chunkType: 'tools_calling', toolsCalling: [payload] }, subagent)];
+        return [
+          ...this.openStreamIfPending(),
+          this.makeChunk({ chunkType: 'tools_calling', toolsCalling: [payload] }, subagent),
+        ];
       }
       case 'finish': {
         return this.handleFinish(chunk.reason);
       }
       case 'reasoning-delta': {
         if (!chunk.text) return [];
-        return [this.makeChunk({ chunkType: 'reasoning', reasoning: chunk.text }, subagent)];
+        return [
+          ...this.openStreamIfPending(),
+          this.makeChunk({ chunkType: 'reasoning', reasoning: chunk.text }, subagent),
+        ];
       }
       case 'text-delta': {
         if (!chunk.text) return [];
-        return [this.makeChunk({ chunkType: 'text', content: chunk.text }, subagent)];
+        return [
+          ...this.openStreamIfPending(),
+          this.makeChunk({ chunkType: 'text', content: chunk.text }, subagent),
+        ];
       }
       // `usage` rides on the `assistant/message` that follows a successful call;
       // `block-start` and the delta fragments of an assembled block add nothing.
@@ -271,11 +339,12 @@ export class DshAdapter implements AgentEventAdapter {
   ): HeterogeneousAgentEvent[] {
     if (subagent) return [];
 
-    const events: HeterogeneousAgentEvent[] = [];
-    if (this.streamOpen) {
-      this.streamOpen = false;
-      events.push(this.makeEvent('stream_end', {}));
-    }
+    // A content-less step (a `max-tokens` cut-off still records its usage)
+    // produces no chunk, so the stream may still be pending here.
+    const events: HeterogeneousAgentEvent[] = [
+      ...this.openStreamIfPending(),
+      ...this.closeStream(),
+    ];
 
     const usage = toUsageData(data?.usage);
     const stepComplete: StepCompleteData = {
@@ -302,7 +371,7 @@ export class DshAdapter implements AgentEventAdapter {
 
     const startData: Record<string, unknown> = { toolCalling };
     if (subagent) startData.subagent = subagent;
-    return [this.makeEvent('tool_start', startData)];
+    return [...this.openStreamIfPending(), this.makeEvent('tool_start', startData)];
   }
 
   private handleToolResult(data: any, subagent?: SubagentEventContext): HeterogeneousAgentEvent[] {
@@ -330,13 +399,12 @@ export class DshAdapter implements AgentEventAdapter {
 
     const events: HeterogeneousAgentEvent[] = [];
     if (data?.reason?.kind === 'error') {
+      // A request that failed before producing output still needs an assistant
+      // message for the error card to land on.
+      events.push(...this.openStreamIfPending());
       events.push(...this.terminalError(data.reason.error, 'error'));
     }
-    if (this.streamOpen) {
-      this.streamOpen = false;
-      events.push(this.makeEvent('stream_end', {}));
-    }
-    events.push(this.makeEvent('visible_output_end', {}));
+    events.push(...this.closeStream(), this.makeEvent('visible_output_end', {}));
     return events;
   }
 
@@ -371,8 +439,10 @@ export class DshAdapter implements AgentEventAdapter {
       parentToolCallId,
       pendingSpawn: true,
       spawnMetadata: {
+        // Provisional title from the delegating call; a `subagent/descriptor`
+        // on the child replaces it with the harness-side label when one lands.
         description: spawningCall?.apiName,
-        prompt: spawningCall?.arguments,
+        prompt: extractPrompt(spawningCall?.arguments),
       },
     });
   }
@@ -380,13 +450,18 @@ export class DshAdapter implements AgentEventAdapter {
   private subagentContextFor(sessionId: string): SubagentEventContext | undefined {
     const link = this.subagentByChildSession.get(sessionId);
     if (!link) return undefined;
+    return { parentToolCallId: link.parentToolCallId };
+  }
 
-    const context: SubagentEventContext = { parentToolCallId: link.parentToolCallId };
-    if (link.pendingSpawn) {
-      link.pendingSpawn = false;
-      if (link.spawnMetadata) context.spawnMetadata = link.spawnMetadata;
-    }
-    return context;
+  private attachSpawnMetadata(sessionId: string, event: HeterogeneousAgentEvent): void {
+    const link = this.subagentByChildSession.get(sessionId);
+    if (!link?.pendingSpawn) return;
+
+    link.pendingSpawn = false;
+    if (!link.spawnMetadata) return;
+
+    const subagent = (event.data as { subagent?: SubagentEventContext }).subagent;
+    if (subagent) subagent.spawnMetadata = link.spawnMetadata;
   }
 
   private registerToolCall(id: string, name: string, args: unknown): ToolCallPayload {

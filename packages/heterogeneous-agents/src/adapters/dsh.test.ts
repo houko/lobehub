@@ -130,8 +130,15 @@ describe('DshAdapter', () => {
       }),
     );
 
-    expect(events.map(({ type }) => type)).toEqual(['error', 'stream_end', 'visible_output_end']);
-    expect(events[0].data).toMatchObject({
+    // The step opened but produced nothing, so its stream is still pending —
+    // the error needs an assistant message to land on.
+    expect(events.map(({ type }) => type)).toEqual([
+      'stream_start',
+      'error',
+      'stream_end',
+      'visible_output_end',
+    ]);
+    expect(events[1].data).toMatchObject({
       agentType: 'deepseek-harness',
       code: 'RATE_LIMIT',
       message: 'slow down',
@@ -167,6 +174,9 @@ describe('DshAdapter', () => {
     adapter.adapt(
       notify('subagent.started', { childSessionId: 'child', parentSessionId: 'parent' }),
     );
+    // A child session opens with lifecycle frames that map to no event; they
+    // must not consume the spawn metadata the executor needs to open the Thread.
+    expect(adapter.adapt(sessionEvent('child', 'turn/start', { turn: 1 }))).toEqual([]);
 
     const first = adapter.adapt(
       sessionEvent('child', 'assistant/chunk', {
@@ -178,7 +188,7 @@ describe('DshAdapter', () => {
       content: 'working',
       subagent: {
         parentToolCallId: 'call_task_1',
-        spawnMetadata: { description: 'subagent', prompt: '{"task":"audit the docs"}' },
+        spawnMetadata: { description: 'subagent', prompt: 'audit the docs' },
       },
     });
 
@@ -228,8 +238,20 @@ describe('DshAdapter', () => {
   it('closes an interrupted stream on flush', () => {
     const adapter = new DshAdapter();
     adapter.adapt(sessionEvent('s1', 'step/start', { step: 1, turn: 1 }));
+    adapter.adapt(
+      sessionEvent('s1', 'assistant/chunk', {
+        chunk: { index: 0, text: 'half a sen', type: 'text-delta' },
+      }),
+    );
 
     expect(adapter.flush().map(({ type }) => type)).toEqual(['stream_end', 'agent_runtime_end']);
     expect(adapter.flush()).toEqual([]);
+  });
+
+  it('opens no stream for a step that died before producing output', () => {
+    const adapter = new DshAdapter();
+    adapter.adapt(sessionEvent('s1', 'step/start', { step: 1, turn: 1 }));
+
+    expect(adapter.flush().map(({ type }) => type)).toEqual(['agent_runtime_end']);
   });
 });
