@@ -132,13 +132,15 @@ export const expertiseRouter = router({
       const domain = await ctx.expertiseModel.findDomain(input.domainId);
       if (!domain) return null;
 
-      const [snapshots, runCount, lessonStats, layerCounts, canon] = await Promise.all([
+      const [snapshots, runCount, humanFlags, lessonStats, layerCounts, canon] = await Promise.all([
         ctx.expertiseModel.listSnapshots(input.domainId),
         ctx.expertiseModel.countRuns(input.domainId),
+        ctx.expertiseModel.runHumanFlags(input.domainId),
         ctx.expertiseModel.lessonStats(input.domainId),
         ctx.expertiseModel.layerCounts(input.domainId),
         ctx.expertiseModel.canonAnchorCounts(input.domainId),
       ]);
+      const humanByRun = new Map(humanFlags.map((r) => [r.runIndex, r.hadHumanInLoop]));
       const latest = snapshots.at(-1);
       // 后段还在涨多少：最后五次的净增。plateauKind 说的是形状，这个说的是量。
       const tail = snapshots.slice(-6);
@@ -155,6 +157,8 @@ export const expertiseRouter = router({
         series: snapshots.map((s) => ({
           activeCount: s.activeCount,
           compiledCount: s.compiledCount,
+          /** 那一次有没有人在对话里 —— 图上柱子的颜色。 */
+          hadHumanInLoop: humanByRun.get(s.runIndex) ?? false,
           runIndex: s.runIndex,
         })),
         tailGain,

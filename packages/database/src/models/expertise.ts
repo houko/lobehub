@@ -166,6 +166,23 @@ export class ExpertiseModel {
     return row?.n ?? 0;
   };
 
+  /**
+   * 每次实践有没有人在场。
+   *
+   * 图上那根柱因此分两色：有人参与的那几次通常是学得最快的几次，这个对比本身
+   * 就是一条结论 —— 「没你参与的实践平均只学到 0.8 条」。丢掉这一位，柱子就只剩
+   * 「涨了多少」，看不出为什么涨。
+   */
+  runHumanFlags = async (domainId: string) =>
+    this.db
+      .select({
+        hadHumanInLoop: expertiseRuns.hadHumanInLoop,
+        runIndex: expertiseRuns.runIndex,
+      })
+      .from(expertiseRuns)
+      .where(eq(expertiseRuns.domainId, domainId))
+      .orderBy(asc(expertiseRuns.runIndex));
+
   /** 规则库的汇总：条数、总命中、零命中条数 —— 头部那行统计读它。 */
   lessonStats = async (domainId: string) => {
     const [row] = await this.db
