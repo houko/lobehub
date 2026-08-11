@@ -122,6 +122,15 @@ export class DshAdapter implements AgentEventAdapter {
   /** Root harness session id — reported for `--resume`-style continuation. */
   sessionId?: string;
 
+  /**
+   * @param rootSessionId - the session the caller prompted. An SDK client picks
+   *   this id itself, so binding it up front stops a sibling session's event
+   *   from claiming the root slot; omit it to adopt the first session seen.
+   */
+  constructor(rootSessionId?: string) {
+    this.sessionId = rootSessionId;
+  }
+
   private finished = false;
   /** A step has opened but has produced no output yet, so its stream is unopened. */
   private pendingStream = false;
