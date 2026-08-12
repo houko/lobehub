@@ -53,18 +53,24 @@ import {
   getRestrictedKnowledgeBaseIds,
   getUseLevelKnowledgeBaseIds,
 } from './_helpers/knowledgeBaseAccess';
-import { getResourceConfigAccess, redactAgentConfig } from './_helpers/resourceConfigGuard';
+import {
+  getResourceConfigAccess,
+  redactAgentConfig,
+  type ResourceConfigAccessResult,
+} from './_helpers/resourceConfigGuard';
 
-const protectAgentConfig = async <T extends Record<string, any>>(
-  ctx: {
-    serverDB: Parameters<typeof getResourceConfigAccess>[0]['db'];
-    userId: string;
-    workspaceId?: string | null;
-    workspacePermissionCodes?: string[];
-  },
+type ResourceConfigContext = {
+  serverDB: Parameters<typeof getResourceConfigAccess>[0]['db'];
+  userId: string;
+  workspaceId?: string | null;
+  workspacePermissionCodes?: string[];
+};
+
+const protectAgentConfigWithAccess = async <T extends Record<string, any>>(
+  ctx: ResourceConfigContext,
   agentId: string,
   config: T | null | undefined,
-): Promise<T | null> => {
+): Promise<ResourceConfigAccessResult<T> | null> => {
   if (!config) return null;
 
   const access = await getResourceConfigAccess(
@@ -79,8 +85,17 @@ const protectAgentConfig = async <T extends Record<string, any>>(
   );
 
   if (access === 'none') return null;
-  return access === 'profile' ? redactAgentConfig(config) : config;
+  return {
+    access,
+    data: access === 'profile' ? redactAgentConfig(config) : config,
+  };
 };
+
+const protectAgentConfig = async <T extends Record<string, any>>(
+  ctx: ResourceConfigContext,
+  agentId: string,
+  config: T | null | undefined,
+): Promise<T | null> => (await protectAgentConfigWithAccess(ctx, agentId, config))?.data ?? null;
 
 const agentProcedure = wsCompatProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
@@ -594,6 +609,17 @@ export const agentRouter = router({
       return protectAgentConfig(ctx, input.agentId, config);
     }),
 
+  getAgentConfigByIdWithAccess: agentProcedure
+    .input(
+      z.object({
+        agentId: z.string(),
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const config = await ctx.agentService.getAgentConfigById(input.agentId);
+      return protectAgentConfigWithAccess(ctx, input.agentId, config);
+    }),
+
   /**
    * Get a builtin agent by slug, creating it if it doesn't exist.
    * This is a generic interface for all builtin agents (page-copilot, inbox, etc.)
@@ -607,6 +633,17 @@ export const agentRouter = router({
     .query(async ({ input, ctx }) => {
       const config = await ctx.agentService.getBuiltinAgent(input.slug);
       return config?.id ? protectAgentConfig(ctx, config.id, config) : config;
+    }),
+
+  getBuiltinAgentWithAccess: agentProcedure
+    .input(
+      z.object({
+        slug: z.string(),
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const config = await ctx.agentService.getBuiltinAgent(input.slug);
+      return config?.id ? protectAgentConfigWithAccess(ctx, config.id, config) : null;
     }),
 
   getKnowledgeBasesAndFiles: agentProcedure

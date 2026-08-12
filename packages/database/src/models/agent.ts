@@ -627,6 +627,7 @@ export class AgentModel {
         title: agents.title,
         userId: agents.userId,
         visibility: agents.visibility,
+        workspaceId: agents.workspaceId,
       })
       .from(agents)
       .where(searchCondition)
@@ -637,7 +638,7 @@ export class AgentModel {
     // Surface only the hetero runtime type, not the full agencyConfig payload.
     return rows.map(({ slug, agencyConfig, ...row }) =>
       normalizeInboxAgentMeta(
-        { ...row, heteroType: agencyConfig?.heterogeneousProvider?.type },
+        { ...row, heteroType: agencyConfig?.heterogeneousProvider?.type, slug },
         { slug },
       ),
     );
