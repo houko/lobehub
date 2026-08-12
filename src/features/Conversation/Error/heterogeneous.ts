@@ -16,6 +16,7 @@ export const HETEROGENEOUS_AGENT_STATUS_GUIDE_ERROR_CODES = new Set<string>([
   HeterogeneousAgentSessionErrorCode.CliNotFound,
   HeterogeneousAgentSessionErrorCode.Overloaded,
   HeterogeneousAgentSessionErrorCode.RateLimit,
+  HeterogeneousAgentSessionErrorCode.WorkingDirectoryNotFound,
 ]);
 
 export const isHeterogeneousAgentStatusGuideError = (
@@ -30,7 +31,8 @@ export const isHeterogeneousAgentStatusGuideError = (
       agentType === 'claude-code' ||
       agentType === 'codex' ||
       agentType === 'opencode' ||
-      agentType === 'pi') &&
+      agentType === 'pi' ||
+      agentType === 'qoder') &&
     typeof code === 'string' &&
     HETEROGENEOUS_AGENT_STATUS_GUIDE_ERROR_CODES.has(code)
   );

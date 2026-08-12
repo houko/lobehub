@@ -19,7 +19,9 @@ import type { NotificationSettings } from './settings/notification';
  * another. See `resolveAgencyConfig` in
  * `packages/types/src/agent/agencyConfig.ts` for the merge implementation.
  *
- * Two fields only, deliberately: `executionTarget` + `boundDeviceId`.
+ * Routing fields only, deliberately: `executionTarget`, `boundDeviceId`, and
+ * the two `localSandbox*` fields (which qualify *this member's* local execution
+ * — how hard their own machine is fenced is theirs to decide).
  * `heterogeneousProvider`, `verifyRubricId`, and `workingDirByDevice` remain
  * agent-shared because they describe *what the agent is*, not *how this user
  * routes it*.
@@ -27,6 +29,8 @@ import type { NotificationSettings } from './settings/notification';
 export interface AgentDeviceOverride {
   boundDeviceId?: string;
   executionTarget?: DeviceExecutionTarget;
+  localSandbox?: boolean;
+  localSandboxNetwork?: boolean;
 }
 
 /**
@@ -170,6 +174,10 @@ export const UserLabSchema = z.object({
    */
   enableCodexAppServer: z.boolean().optional(),
   /**
+   * enable displaying two desktop tabs side by side
+   */
+  enableDesktopSplitView: z.boolean().optional(),
+  /**
    * one-click import of local Claude Code / Codex CLI sessions as topics (desktop only)
    */
   enableHeteroSessionImport: z.boolean().optional(),
@@ -197,10 +205,6 @@ export const UserLabSchema = z.object({
    * show OAuth app management in personal and workspace settings
    */
   enableOAuthApps: z.boolean().optional(),
-  /**
-   * show the "Add Platform Agent" entry in the create menu
-   */
-  enablePlatformAgent: z.boolean().optional(),
   /**
    * enable the task delivery-acceptance (verify) config UI on the task detail
    */

@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useBriefStore } from '@/store/brief';
+import { useTaskStore } from '@/store/task';
 
 import BriefCardActions from '../BriefCardActions';
 
@@ -54,6 +55,8 @@ vi.mock('../CommentInput', () => ({
 
 const mockResolveBrief = vi.fn();
 const mockSubmitFeedback = vi.fn();
+const mockSetActiveTaskId = vi.fn();
+const mockOpenTopicDrawer = vi.fn();
 const mockToastError = vi.spyOn(toast, 'error').mockReturnValue(undefined as never);
 
 const sampleActions: BriefAction[] = [
@@ -66,6 +69,10 @@ beforeEach(() => {
   useBriefStore.setState({
     resolveBrief: mockResolveBrief,
     submitFeedback: mockSubmitFeedback,
+  });
+  useTaskStore.setState({
+    openTopicDrawer: mockOpenTopicDrawer,
+    setActiveTaskId: mockSetActiveTaskId,
   });
 });
 
@@ -111,6 +118,33 @@ describe('BriefCardActions', () => {
     await waitFor(() => expect(onAfterResolve).toHaveBeenCalled());
   });
 
+  it('should open the run drawer with the brief agent riding the open call', () => {
+    renderWithRouter(
+      <BriefCardActions
+        agentId="agent-1"
+        briefId="brief-1"
+        briefType="error"
+        taskId="task-1"
+        topicId="topic-1"
+        topicTitle="Nightly cleanup"
+      />,
+    );
+
+    fireEvent.click(screen.getByText('View run'));
+
+    expect(mockSetActiveTaskId).toHaveBeenCalledWith('task-1');
+    // The agent/title must ride openTopicDrawer itself: setActiveTaskId clears
+    // the drawer's agent state, so without this the drawer's `open` gate stays
+    // false until (unless) the task-detail fetch resolves.
+    expect(mockOpenTopicDrawer).toHaveBeenCalledWith('topic-1', {
+      agentId: 'agent-1',
+      title: 'Nightly cleanup',
+    });
+    expect(mockSetActiveTaskId.mock.invocationCallOrder[0]).toBeLessThan(
+      mockOpenTopicDrawer.mock.invocationCallOrder[0],
+    );
+  });
+
   it('should hide action buttons when comment button clicked', () => {
     const { container } = renderWithRouter(
       <BriefCardActions
@@ -120,14 +154,55 @@ describe('BriefCardActions', () => {
         taskId="task-1"
       />,
     );
-    const commentButton = container.querySelector('.brief-comment-btn');
-    expect(commentButton).toBeInTheDocument();
-    fireEvent.click(commentButton!);
-
-    // CommentInput replaces action buttons
+    fireEvent.click(container.querySelector('.brief-comment-btn')!);
     expect(screen.queryByText('Approve')).not.toBeInTheDocument();
+  });
+
+  it('should show comment input when comment button clicked', () => {
+    const { container } = renderWithRouter(
+      <BriefCardActions
+        actions={sampleActions}
+        briefId="brief-1"
+        briefType="decision"
+        taskId="task-1"
+      />,
+    );
+    fireEvent.click(container.querySelector('.brief-comment-btn')!);
     expect(screen.getByTitle('Submit feedback')).toBeInTheDocument();
-    expect(screen.getByText('Cancel')).toBeInTheDocument();
+  });
+
+  it('should restore action buttons when comment cancelled', () => {
+    const { container } = renderWithRouter(
+      <BriefCardActions
+        actions={sampleActions}
+        briefId="brief-1"
+        briefType="decision"
+        taskId="task-1"
+      />,
+    );
+    fireEvent.click(container.querySelector('.brief-comment-btn')!);
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.getByText('Approve')).toBeInTheDocument();
+  });
+
+  it('should submit feedback and refresh on send', async () => {
+    mockSubmitFeedback.mockResolvedValueOnce(undefined);
+    const onAfterAddComment = vi.fn();
+    const { container } = renderWithRouter(
+      <BriefCardActions
+        actions={sampleActions}
+        briefId="brief-1"
+        briefType="decision"
+        taskId="task-1"
+        onAfterAddComment={onAfterAddComment}
+      />,
+    );
+    fireEvent.click(container.querySelector('.brief-comment-btn')!);
+    fireEvent.click(screen.getByTitle('Submit feedback'));
+    await waitFor(() =>
+      expect(mockSubmitFeedback).toHaveBeenCalledWith('brief-1', 'task-1', 'my feedback'),
+    );
+    await waitFor(() => expect(onAfterAddComment).toHaveBeenCalled());
   });
 
   it('should show resolved state when resolvedAction is set', () => {
@@ -215,7 +290,7 @@ describe('BriefCardActions', () => {
     expect(screen.queryByText('Confirm', { exact: true })).not.toBeInTheDocument();
   });
 
-  // LOBE-12704: the tRPC client only console.errors non-401 failures, so a
+  // Brief permission errors: the tRPC client only console.errors non-401 failures, so a
   // rejected action used to read as a dead button — which is how "no permission"
   // reached us as a bug report with no error on screen.
   it('should surface the failure reason when a resolve action is rejected', async () => {

@@ -7,14 +7,15 @@ import { memo, useCallback, useEffect, useRef } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 
 import Loading from '@/components/Loading/BrandTextLoading';
+import OnboardingContainer from '@/features/Onboarding/Layout';
+import AgentPickerStep from '@/features/Onboarding/steps/AgentPickerStep';
+import FullNameStep from '@/features/Onboarding/steps/FullNameStep';
+import InterestsStep from '@/features/Onboarding/steps/InterestsStep';
+import ProSettingsStep from '@/features/Onboarding/steps/ProSettingsStep';
 import { useFinishOnboarding } from '@/features/Onboarding/useFinishOnboarding';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useOnboardingAgentTemplates } from '@/hooks/useOnboardingAgentTemplates';
-import OnboardingContainer from '@/routes/onboarding/_layout';
-import AgentPickerStep from '@/routes/onboarding/features/AgentPickerStep';
-import FullNameStep from '@/routes/onboarding/features/FullNameStep';
-import InterestsStep from '@/routes/onboarding/features/InterestsStep';
-import ProSettingsStep from '@/routes/onboarding/features/ProSettingsStep';
+import { useSingleton } from '@/hooks/useSingleton';
 import {
   trackOnboardingStepCompleted,
   trackOnboardingStepViewed,
@@ -59,8 +60,8 @@ const ClassicOnboardingPage = memo(() => {
   const enableComposio = useServerConfigStore(serverConfigSelectors.enableComposio);
   const serverConfigInit = useServerConfigStore((s) => s.serverConfigInit);
   const shouldSkipProSettingsStep = serverConfigInit && !enableComposio;
-  const autoSkippedStepKeysRef = useRef<Set<string>>(new Set());
-  const viewedStepKeysRef = useRef<Set<string>>(new Set());
+  const autoSkippedStepKeys = useSingleton(() => new Set<string>());
+  const viewedStepKeys = useSingleton(() => new Set<string>());
   const legacyRemappedRef = useRef(false);
 
   // Which step the user actually lands on last, and therefore which "next"
@@ -115,9 +116,9 @@ const ClassicOnboardingPage = memo(() => {
     }
 
     const payload = CLASSIC_STEP_TRACKING[PRO_SETTINGS_STEP];
-    if (autoSkippedStepKeysRef.current.has(payload.step)) return;
+    if (autoSkippedStepKeys.has(payload.step)) return;
 
-    autoSkippedStepKeysRef.current.add(payload.step);
+    autoSkippedStepKeys.add(payload.step);
     trackOnboardingStepCompleted({
       ...payload,
       action: 'auto_skip',
@@ -125,6 +126,7 @@ const ClassicOnboardingPage = memo(() => {
     });
     goToNextStep();
   }, [
+    autoSkippedStepKeys,
     commonStepsCompleted,
     currentStep,
     goToNextStep,
@@ -161,9 +163,9 @@ const ClassicOnboardingPage = memo(() => {
     }
 
     const payload = getClassicStepTrackingPayload(currentStep);
-    if (!payload || viewedStepKeysRef.current.has(payload.step)) return;
+    if (!payload || viewedStepKeys.has(payload.step)) return;
 
-    viewedStepKeysRef.current.add(payload.step);
+    viewedStepKeys.add(payload.step);
     trackOnboardingStepViewed(payload);
   }, [
     commonStepsCompleted,
@@ -171,6 +173,7 @@ const ClassicOnboardingPage = memo(() => {
     isUserStateInit,
     serverConfigInit,
     shouldSkipProSettingsStep,
+    viewedStepKeys,
   ]);
 
   const goToNextStepFromFullName = useCallback(() => {

@@ -172,20 +172,25 @@ Acceptance fixture through the local CLI, and capture the same route in separate
 authenticated and storage-empty browser contexts. This proves both owner and
 shared-viewer rendering without depending on production browser cookies.
 
-### The dev Electron main window runs the WEB entry — desktop-entry boot code is unverifiable in dev
+### Which entry the dev Electron main window loads is NOT stable — measure it, never assume
 
 **Situation:** verifying anything that lives in `src/spa/entry.desktop.tsx` (bootstrap
 identity, adapter registration, boot marks) on an `electron-dev.sh` instance.
 
-**Doesn't work:** assuming the desktop instance loads the desktop entry. Measured on a
-live dev instance, the **main window's entry script is `app://renderer/src/spa/entry.web.tsx`**,
-while the **topicPopup window in the same instance correctly loads `entry.popup.tsx`**.
-So Vite dev does resolve some MPA paths but the main window falls through to the root
-`index.html`. (Mechanism not established — do not repeat the plausible-sounding
-"`ViteRendererFallback` is a dumb proxy so everything falls back" explanation; the popup
-result falsifies it.) Consequence: desktop-entry boot code never executes in dev, and a
-deletion there passes every dev smoke test — which is exactly how one such call was lost
-for a whole release.
+**Doesn't work:** assuming any particular entry, in either direction. This has now been
+measured with two different results on the same helper:
+
+- Earlier: the main window's entry script was `app://renderer/src/spa/entry.web.tsx`
+  while the topicPopup window in the same instance loaded `entry.popup.tsx` — so the
+  main window fell through to the root `index.html`. Consequence at the time:
+  desktop-entry boot code never executed in dev, and a deletion there passed every dev
+  smoke test, which is how one such call was lost for a whole release.
+- 2026-08-05, on `feat/home-customize-modal`: the main window loaded
+  **`app://renderer/src/spa/entry.desktop.tsx`** — the fall-through did not reproduce.
+
+Mechanism not established in either direction, and no bisect was done, so do not
+assume the newer reading is permanent either. Treat the loaded entry as an unknown to
+be measured per run — that is the durable rule; the specific value is not.
 
 **Works:** before claiming anything about a desktop entry, read the loaded entry script
 and branch on it:
@@ -198,6 +203,42 @@ If it is not the entry you are testing, the surface cannot prove your claim — 
 a source-order regression test, and say in the report that the runtime path needs a
 packaged build (`DESKTOP_RENDERER_STATIC` / `resolveRendererFilePath` maps
 `apps/desktop/index.html`, `popup.html`, `overlay.html`).
+
+### Measuring production-bundle startup behavior without packaging the app
+
+**Situation:** a claim depends on the built renderer (chunk splitting, lazy-route
+boundaries, startup paint timing), which dev-mode Vite cannot reproduce.
+
+**Doesn't work:** measuring in the dev instance (unbundled modules make lazy vs
+eager indistinguishable), or trusting `performance.getEntriesByType('resource')`
+to identify what loaded — the `app://` protocol emits no resource-timing entries
+at all (0 JS resources on a fully loaded page).
+
+**Works:** build the renderer (`cd apps/desktop && vite build --config
+vite.renderer.config.ts`), then launch a pool instance with the static override:
+
+```bash
+DESKTOP_RENDERER_STATIC=1 .agents/acceptance/scripts/electron-dev.sh start 1
+```
+
+The dev main process serves `apps/desktop/dist/renderer` over `app://renderer/`
+with the seeded login. Prove which build is loaded via the modulepreload hashes
+in the live DOM, not resource timing:
+
+```js
+[...document.querySelectorAll('link[rel=modulepreload]')]
+  .map((l) => l.href)
+  .find((h) => h.includes('<chunk-under-test>'));
+```
+
+Paint metrics survive post-hoc collection: a buffered
+`PerformanceObserver({ type: 'largest-contentful-paint', buffered: true })` plus
+`performance.getEntriesByType('paint')` read after load give FCP/DCL and the full
+LCP-candidate timeline. `restart 1` re-seeds userData, so each restart is a
+comparable cold start; `location.reload()` gives low-variance warm samples. For
+A/B builds, swap `dist/renderer` directories between restarts — remote-image LCP
+entries are network-noisy, so compare text-paint candidates and DCL across ≥5
+cold samples per variant before attributing a delta.
 
 ### Driving and probing a real Electron popup window
 
@@ -243,6 +284,36 @@ snapshot; the local Vite entry (`http://localhost:9876/`) loads modules correctl
 no session, so it ends in the same error for a different reason. See also the two
 neighbouring entries on this proxy (loading-shell in an isolated context; no seeded
 agent-browser session).
+
+### The composer's slash menu needs real key events — `keyboard type` never opens it
+
+**Situation:** driving the chat composer's `/` slash menu (or anything else gated on
+a Lexical `KEY_DOWN_COMMAND`) through agent-browser.
+
+**Doesn't work:** `agent-browser keyboard type "/"`. It inserts through CDP
+`Input.insertText`, which produces no `keydown` at all — verified by installing a
+capturing `document.addEventListener("keydown", …)` and watching it stay empty while
+the character lands in the composer. The editor's SlashPlugin keeps `suppressOpen`
+true until a keydown with `key.length === 1` resets it, so the text appears and the
+menu never does. Reads exactly like "the slash menu is broken", which is worse than
+a visible failure because the composer clearly received the input.
+
+**Works:** use `agent-browser press '/'` for the trigger (and `press Backspace` to
+clear). `press` goes through `Input.dispatchKeyEvent`, so the keydown reaches
+Lexical. `keyboard type` remains fine for bulk text that no plugin is gated on —
+type the prose with it, but fire any menu trigger with `press`.
+
+```bash
+agent-browser --session "$RS" click '[data-probe=composer]'
+agent-browser --session "$RS" press '/'   # menu opens
+agent-browser --session "$RS" press Enter # selects the highlighted item
+```
+
+Confirm the mechanism rather than assuming a menu is missing:
+
+```bash
+agent-browser --session "$RS" eval '(() => { window.__KD=[]; document.addEventListener("keydown", e => window.__KD.push(e.key), true); return "installed"; })()'
+```
 
 ### Reading a transitioned CSS property immediately after focus/hover
 
@@ -525,6 +596,22 @@ agent-browser --session "$RUN_SESSION" \
 Then assert `get url` and `app-probe.sh auth` on that exact session before
 capturing evidence.
 
+### Agent-browser navigation hangs after an orphaned Next child keeps the port
+
+**Situation:** an isolated full-stack dev launcher exits, but its Next child
+continues listening without returning HTTP responses. `agent-browser open`,
+`get url`, and even session close can then appear to hang because navigation
+never settles.
+
+**Doesn't work:** repeatedly recreating browser sessions or assuming the
+browser daemon is the root cause while `curl --max-time` to the target route
+also receives zero bytes.
+
+**Works:** inspect the exact listener with `lsof`, confirm its command and
+working tree, terminate only that run-owned process tree, then restart through
+`init-dev-env.sh dev` and reseed the isolated browser auth. A successful HTTP
+probe must precede browser assertions.
+
 ### Leftover React Scan instrumentation poisons every screenshot
 
 **Situation:** capturing UI evidence in a dev instance the user (or an earlier
@@ -639,6 +726,36 @@ Keep that command session open for the run. Confirm the CDP endpoint, project
 process path, `app-probe.sh ready`, renderer auth, server auth, and a raw-CDP
 screenshot before collecting evidence.
 
+### `acceptance run ingest` is creative — re-running it to re-read its output mints a duplicate round
+
+**Situation:** after a successful ingest, wanting to re-check a field from its JSON
+output (evidence count, acceptanceId).
+
+**Doesn't work:** running the same `ingest` command again "just to see the output".
+Every invocation creates a new immutable round on the acceptance — the re-run
+publishes a byte-identical duplicate round that reviewers then see twice.
+
+**Works:** re-read state with the read-only commands — `acceptance run list`,
+`acceptance run get <runId>`, `acceptance view <id> --json`. If a duplicate was
+minted by mistake, `acceptance run delete <runId> --yes` (newest timestamp = the
+accident) restores the round history; this is data correction of an operator
+error, distinct from the forbidden overwrite-a-real-round.
+
+### A backgrounded `init-dev-env.sh dev` looks dead while the server is alive on a dynamic port
+
+**Situation:** starting the dev server from a harness-managed background command in a
+worktree, then waiting for readiness.
+
+**Doesn't work:** trusting the background task's captured output (it can stay 0 bytes
+while the detached process tree lives on), or polling the default port. Worktrees
+allocate dynamic ports, so probing `localhost:3010` waits forever while the server is
+already up elsewhere; a retry then fails with "an owned dev server is already running".
+
+**Works:** treat `.records/runtime/` as the source of truth — it records `PID`,
+`SERVER_PORT` and `SPA_PORT` for the owned instance. Read the port from there and poll
+that. For a long-lived start prefer a detached `screen -dmS <name> … >> .records/logs/x.log`
+so the log lands in a stable file; `stop-dev` still stops the recorded PID tree either way.
+
 ### Cold SWR cache: clearing then reloading is undone by the outgoing page
 
 **Situation:** forcing a first-load / skeleton state for anything backed by the
@@ -714,9 +831,44 @@ const aside = drawer && [...drawer.parentElement.children].find((c) => c.tagName
 ```
 
 Then assert on `aside.innerText` line count plus a count of text-free rounded boxes
-(the skeleton rows). Distinguish the two skeleton states explicitly: the whole panel
-collapsing to \~8 text-free rows is the nav-panel fallback, while fixed items present
-with only the list area shimmering is ordinary data loading.
+(the skeleton rows). Distinguish the two skeleton states explicitly: a text-free panel
+carrying `[data-testid="nav-sidebar-skeleton"]` is the nav-panel fallback, while fixed
+items present with only the list area shimmering is ordinary data loading. Do NOT
+identify the fallback by a row count — it is shaped per navKey now
+(`NAV_SKELETON_SHAPES`), so memory/discover render header plus a nav list and no body
+at all, while settings renders a search box plus four accordion groups.
+
+### Park a route's lazy chunk to hold its pending sidebar on screen
+
+**Situation:** verifying what a route's `NavPanel` fallback (or any `dynamicElement`
+Suspense fallback) actually renders. The pending state lasts a few hundred ms, so no
+screenshot or `agent-browser eval` catches it.
+
+**Doesn't work:** network throttling, or adding a debug flag that force-renders the
+fallback. Throttling does not bound the module fetch predictably, and a force-render
+flag proves the component renders, not that the product path reaches it.
+
+**Works:** raw CDP `Fetch.enable` intercepts `app://renderer/...` module requests in
+the Electron renderer. Park the route's layout chunk and the portal never registers,
+so the fallback stays up indefinitely — measure and screenshot at leisure, then kill
+the CDP connection to release the request and measure the settled sidebar in the same
+session.
+
+```js
+Fetch.enable({ patterns: [{ requestStage: 'Request', urlPattern: '*settings/_layout*' }] });
+// on Fetch.requestPaused: keep the requestId, never continueRequest
+// [paused] app://renderer/src/routes/(main)/settings/_layout/index.tsx?t=1785957215039
+```
+
+Two traps. The pattern must name the **layout** chunk only: a broad `*settings*`
+also parks `store/user/slices/settings/*` and the router's own `routeMeta`, which
+stalls boot instead of the route. And the layout module is not always under the path
+you guess — the agent sidebar registers from `(main)/agent/_layout`, not
+`(main)/agent/(chat)/_layout`; when the measurement comes back `mode: real`, the
+pattern missed, it is not a product finding.
+
+Drive the navigation with `app-probe.sh goto <route>` (a full reload, so the module
+is re-requested and re-parked).
 
 ### Boot-phase UI cannot be observed by CDP polling — sample in-page, and mirror the timer
 
@@ -837,6 +989,7 @@ cache, so the renderer still shows the pre-write value (generic M18). Clear
 `lobechat-swr-cache*` + `lobehub-local-data` through
 `Page.addScriptToEvaluateOnNewDocument` and reload (see "Cold SWR cache" above),
 then assert `agentMap[id].agencyConfig` before drawing any conclusion.
+
 ### An unconverged lockfile puts two copies of a dep in the graph — every route using it dies at the ErrorBoundary
 
 **Situation:** after rebasing onto a canary that bumped a shared UI dependency and
@@ -907,6 +1060,143 @@ Gate on a real authenticated TRPC call rather than on the page rendering: a 200 
 `apps/desktop` are standalone installs (PROJECT.md §1), so each also needs its own
 `pnpm install` in a fresh worktree.
 
+### The dev Electron instance may be a thin client on PRODUCTION — read `dataSyncConfig` before any write
+
+**Situation:** starting `electron-dev.sh` to verify a frontend change, then driving flows that
+create or mutate product objects (labels, groups, agents, forwarded topics, saved edits).
+
+**Doesn't work:** assuming the instance talks to a local backend because the run also started one.
+The seeded login snapshot carries its own target, and `{"storageMode":"cloud","active":true}` means
+the renderer runs your working-tree code while every request goes to `app.lobehub.com` with the
+user's real account. `app-probe.sh server-auth` returns 200, which reads as "the local stack is
+wired up" and encourages exactly the writes that then land in production. The local dev server the
+run started sits unused.
+
+**Works:** read the target first and let it decide the test's write budget.
+
+```bash
+agent-browser --cdp 9222 eval '(() => JSON.stringify(window.__LOBE_STORES.electron().dataSyncConfig))()'
+# {"storageMode":"cloud","active":true}   -> production account; keep the run read-only
+# {"storageMode":"selfHost","remoteServerUrl":"http://localhost:3111", ...} -> local backend
+```
+
+On `cloud`, verify open / render / close only, treat every submit as a user-owned decision, and
+prove afterwards that nothing was written (re-read the relevant store count). Note this also makes
+the whole local-server bring-up unnecessary — check the target before spending minutes on it.
+
+### Asserting a modal's exit window: `data-ending-style` is never set, and `record-gif.sh` is far too slow
+
+**Situation:** proving what a base-ui modal does during its \~120ms exit — typically that the body
+stays mounted while the panel fades, rather than blanking at the start of the animation.
+
+**Doesn't work:** three separate traps.
+
+- Gating on `panel.hasAttribute("data-ending-style")`. `base-ui/Modal/style.mjs` does carry a
+  `[data-ending-style]` rule, but the imperative host animates through motion/react, so the
+  attribute stays absent for the whole exit. Filtering samples on it yields an empty set and reads
+  as "the exit never happened".
+- Polling the state from the driver. A `Runtime.evaluate` round trip is the same order of magnitude
+  as the window itself, so the driver only ever observes before and after.
+- `scripts/record-gif.sh`. Its own header caps effective rate at 1–2 fps; a 120ms window gets at
+  most one frame.
+
+**Works:** sample inside the page and capture frames from the compositor.
+
+```js
+// exit-window signal = opacity decay on popupInner ([role=dialog] > :first-child)
+const tick = () =>
+  samples.push({
+    t: performance.now() - t0,
+    connected: panel.isConnected,
+    opacity: getComputedStyle(panel).opacity,
+    panelH: panel.getBoundingClientRect().height,
+    contentKids: content.children.length,
+    contentTextLen: content.innerText.length,
+  });
+setInterval(tick, 8);
+```
+
+A body that survives the exit holds `contentTextLen` / `contentKids` constant while opacity decays,
+and the panel shrinks only \~1.5% (the `scale(0.98)` exit transform) instead of collapsing to the
+56px header. For the visual half, drive raw CDP `Page.startScreencast` (frames land only when the
+compositor paints, so they cluster inside the animation — \~9 frames in the 120ms window) and replay
+those unmodified frames slowly with ffmpeg. Do not slow the product's own transition: the exit is a
+JS animation, so a CSS `transition-duration` override does nothing anyway.
+
+### Day-scoped fixtures must use the browser's measured timezone, not an assumed one
+
+**Situation:** seeding backdated rows (briefs, activity, digests) whose UI grouping is
+by the viewer's _local calendar day_ (`dayjs().startOf('day')` on the client).
+
+**Doesn't work:** computing the day boundaries from an assumed timezone (the user's
+usual locale, the server tz, or the shell's). On this harness the agent-browser
+Chromium reports `America/Los_Angeles`, so a "today 14:00 CST" timestamp lands on the
+browser's _yesterday_ — the day view renders empty and reads exactly like the
+feature not fetching, while the server endpoint returns the rows when probed with
+the "correct" (assumed-tz) window.
+
+**Works:** before seeding, read the tz the grouping actually uses —
+`agent-browser eval 'Intl.DateTimeFormat().resolvedOptions().timeZone'` — and derive
+every `[startAt, endAt)` from that. When a day view comes back empty, diff the
+client's real request window (fetch wrapper on the batch URL) against the seeded
+timestamps before suspecting the query.
+
+### An `ActionIcon` is not a `<button>` — select it by its lucide class, click through agent-browser
+
+**Situation:** driving an icon-only affordance inside a popover or panel (`ActionIcon`
+from `@lobehub/ui`: refresh, calendar, more, …).
+
+**Doesn't work:** three separate near-misses, each of which reads as "the affordance
+does not exist" rather than as a driving error:
+
+- `pop.querySelectorAll('button')` misses it. `ActionIcon` renders a `div`/`span`
+  wrapper (`class="lobe-flex …"` around `span.anticon`), so a button-only sweep of a
+  popover reports zero controls and invites the wrong conclusion that the entry was
+  never rendered.
+- `el.click()` on that wrapper `div` resolves and returns, but no handler runs — the
+  React `onClick` sits on an inner node, so the tab-clicking recipe above does not
+  transfer to icon buttons.
+- `agent-browser click --x <n> --y <n>` is not a thing; `click` only takes a CSS
+  selector, XPath, or an `@eN` snapshot ref, and coordinates fail with the generic
+  `Element not found`, which reads as a missing element rather than a bad invocation.
+
+**Works:** find the icon by its lucide class, tag it, and let agent-browser do the
+real click:
+
+```bash
+agent-browser --cdp 9222 eval '(() => {
+  const pop = [...document.querySelectorAll("[role=dialog]")].pop();
+  pop.querySelector("svg.lucide-calendar-days").setAttribute("data-qc", "entry");
+  return "tagged";
+})()'
+agent-browser --cdp 9222 click "[data-qc=entry]"
+```
+
+Enumerate candidates with `pop.querySelectorAll("button,[role=button],span[role]")`
+and read each node's `svg` class when the icon's identity is unknown. Two follow-ons
+worth knowing: a stray click on a tagged text node can dismiss the popover (re-open
+and re-tag rather than assuming the control vanished), and a `Tooltip`-wrapped cell
+needs a real pointer move (`Input.dispatchMouseEvent` over several coordinates, or a
+dispatched `pointerover`+`mouseover` pair) before its content mounts.
+
+### A pool instance seeded from the login snapshot can boot signed out — `safeStorage` cannot decrypt the copied token
+
+**Situation:** `electron-dev.sh start <id>` in a worktree; the helper reports the
+renderer ready and the seeded login is present on disk.
+
+**Doesn't work:** trusting `login-status`'s "refresh token PRESENT" as proof the
+instance will come up authenticated. The pool's copied userData can fail to decrypt
+its access token — `/tmp/lobe-electron-pool/instance-<id>.log` repeats
+`Failed to decrypt access token: Error while decrypting the ciphertext provided to
+safeStorage.decryptString` — and the app boots signed out (`app-probe.sh auth` →
+`isSignedIn: false`) with a near-blank shell that reads like a broken route tree.
+Cause not established; re-seeding and restarting the same pool id does not help.
+
+**Works:** fall back to the legacy single instance (`electron-dev.sh start`, no id),
+which runs on the golden profile in place and decrypts normally. It boots on the
+loading shell once, so reload once before probing (see L-S8). Gate on
+`app-probe.sh auth` AND `server-auth`, never on the helper's "Ready" line.
+
 ## Detailed references
 
 - [Probe field notes](./references/probe-field-notes.md) — all historical
@@ -927,3 +1217,66 @@ Gate on a real authenticated TRPC call rather than on the page rendering: a 200 
   work / Works and evidence for every mechanism claim.
 - Promote product-independent findings to the generic skill layer rather than
   duplicating them here.
+
+### Switching web-session theme for dark-mode evidence needs no UI — next-themes reads `localStorage.theme`
+
+**Situation:** capturing light- and dark-mode evidence in the seeded `agent-browser`
+web session (settings UI navigation is slow and the theme control moved between
+releases; an earlier round wrongly concluded the web session "cannot switch to
+dark").
+
+**Doesn't work:** driving the settings UI to flip appearance, or editing user
+settings server-side (the provider is `next-themes` with `defaultTheme="system"` —
+the server does not own it).
+
+**Works:** set the next-themes key directly, then reload the target route in the
+same session:
+
+```bash
+agent-browser --session lobehub-dev eval "localStorage.setItem('theme','dark')"
+agent-browser --session lobehub-dev open "$SERVER_URL/<route>" # re-render applies html[data-theme]
+```
+
+`'light'` / removal (`localStorage.removeItem('theme')` → back to system) work the
+same way. Restore BEFORE stopping the dev server — once the server is down the
+document becomes sourceless and `localStorage` access throws SecurityError, so the
+override stays behind for the next run. Assert the applied theme via
+`document.documentElement.dataset.theme`, not the storage value.
+
+### A reset shell cwd silently retargets git commits at the main repo's checked-out branch
+
+**Situation:** a long worktree-based session where the harness occasionally resets the
+shell cwd back to the main repo root (e.g. after a `cd /tmp` in a compound command).
+
+**Doesn't work:** running `git add -A && git commit` (or `bun run check`) without an
+explicit `cd` into the worktree. The commands succeed against the MAIN repo — the
+commit lands on whatever branch the user has checked out there, staging their
+unrelated dirty files, while the intended worktree change stays uncommitted. The
+only tell is an unexpected diffstat / parent commit; `push <branch>` then reports
+"Everything up-to-date" because the worktree branch ref never moved.
+
+**Works:** in any worktree session, prefix every git/check command with an explicit
+`cd <worktree> &&`, and read the commit output's diffstat + `git log -1` parent
+before pushing. Recovery for a mistaken main-repo commit: `git reset --mixed HEAD~1`
+restores the user's branch and leaves their working tree as it was (verify against
+the session-start `gitStatus` snapshot); nothing needs force-pushing because the
+wrong-branch push was a no-op.
+
+### Electron dev 的 BackendProxy 指向登录快照里持久化的 server 端口 — 铸会话 + CDP 注入 cookie
+
+**Situation:** worktree 里起 Electron surface 验证纯前端改动，renderer 一切正常但
+`app-probe.sh server-auth` 返回 502，用户状态 `isUserStateInit` 一直 false（受它门控的
+UI—— 如 Labs 分栏 —— 静默不渲染，store 状态看起来 "设置了但没生效"）。
+
+**Doesn't work:** 把 dev server 起在 3010 或 test-env.sh 解析出的动态端口。桌面主进程的
+BackendProxy 目标端口持久化在登录快照的 userData 里（`/tmp/electron-dev.log` 里
+`BackendProxy upstream fetch failed ... http://localhost:<port>` 是唯一真相），与当前
+ports-file 无关。端口对上后若见 401，是快照 cookie 对本地库已失效 —— 重启 Electron 重种快照
+也救不回来。
+
+**Works:** 三步：① 从日志读出 BackendProxy 的目标端口，`PORT=<该端口>` 起 dev server；
+② 用 web-seed 同款 curl 铸 better-auth 会话（`POST /api/auth/sign-in/email`，seeded 用户；
+从 renderer 内 fetch 会因 app\://origin 被 403，必须 curl）；③ 把 `better-auth.session_data`
+/ `better-auth.session_token` 两个 cookie 经 raw CDP `Network.setCookie`（url 填
+`http://localhost:<端口>/`）写进 Electron 的 cookie store，`location.reload()` 后
+server-auth 200、`isUserStateInit` true。

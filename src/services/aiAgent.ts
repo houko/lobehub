@@ -68,6 +68,7 @@ export interface ExecAgentTaskParams {
   existingMessageIds?: string[];
   /** File IDs of already-uploaded attachments to attach to the new user message */
   fileIds?: string[];
+  localDeviceId?: string;
   /**
    * Agents the user @-mentioned in this message (multi-mention). The server
    * enables the callAgent tool and injects the mentioned-agents delegation
@@ -133,6 +134,11 @@ export interface InterruptTaskParams {
  */
 export interface CreateClientTaskThreadParams {
   agentId: string;
+  /**
+   * Seed an assistant placeholder for transports that stream into an existing
+   * message (for example a local heterogeneous CLI).
+   */
+  assistantMessage?: { provider: string };
   groupId?: string;
   /** Initial user message content (task instruction) */
   instruction: string;

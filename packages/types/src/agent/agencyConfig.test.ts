@@ -8,6 +8,7 @@ import {
   codexModelSupportsReasoningEffort,
   getCodexReasoningEffortLevels,
   HETEROGENEOUS_AGENT_DEFAULT_SELECTION,
+  normalizeHeterogeneousProviderConfig,
   pruneWorkingDirByDeviceDeletes,
   resolveAgencyConfig,
   resolveAgentAgencyConfig,
@@ -17,6 +18,38 @@ import {
   resolveCodexReasoningEffort,
   resolveCodexSpeedMode,
 } from './agencyConfig';
+
+describe('normalizeHeterogeneousProviderConfig', () => {
+  it('recovers a legacy adapterType before considering the command', () => {
+    const legacyConfig = {
+      adapterType: 'codex',
+      command: 'claude',
+    } as unknown as HeterogeneousProviderConfig;
+
+    expect(normalizeHeterogeneousProviderConfig(legacyConfig)).toEqual({
+      command: 'claude',
+      type: 'codex',
+    });
+  });
+
+  it('infers legacy Claude Code and Codex identities from their commands', () => {
+    const legacyClaudeConfig = {
+      command: '/usr/local/bin/custom-claude',
+    } as unknown as HeterogeneousProviderConfig;
+    const legacyCodexConfig = {
+      command: '/usr/local/bin/custom-codex',
+    } as unknown as HeterogeneousProviderConfig;
+
+    expect(normalizeHeterogeneousProviderConfig(legacyClaudeConfig).type).toBe('claude-code');
+    expect(normalizeHeterogeneousProviderConfig(legacyCodexConfig).type).toBe('codex');
+  });
+
+  it('preserves the legacy Claude Code default when no identity can be recovered', () => {
+    const legacyConfig = { command: 'custom-agent' } as unknown as HeterogeneousProviderConfig;
+
+    expect(normalizeHeterogeneousProviderConfig(legacyConfig).type).toBe('claude-code');
+  });
+});
 
 describe('pruneWorkingDirByDeviceDeletes', () => {
   it('deletes keys whose patch value is undefined', () => {
@@ -77,6 +110,67 @@ describe('buildHeteroSpawnArgs', () => {
 
     expect(buildHeteroSpawnArgs(provider)).toEqual(['--mode', 'high']);
     expect(buildHeteroExecArgs(provider)).toEqual(['--agent-arg=--mode', '--agent-arg=high']);
+  });
+
+  it('forwards Qoder native args, model, and reasoning effort', () => {
+    const provider: HeterogeneousProviderConfig = {
+      args: ['--verbose'],
+      effort: 'high',
+      model: 'qoder-model',
+      type: 'qoder',
+    };
+
+    expect(buildHeteroSpawnArgs(provider)).toEqual([
+      '--verbose',
+      '--model',
+      'qoder-model',
+      '--reasoning-effort',
+      'high',
+    ]);
+    expect(buildHeteroExecArgs(provider)).toEqual([
+      '--agent-arg=--verbose',
+      '--model',
+      'qoder-model',
+      '--effort',
+      'high',
+    ]);
+  });
+
+  it('preserves Qoder model and reasoning effort from native args without injecting duplicates', () => {
+    expect(
+      buildHeteroSpawnArgs({
+        args: ['-m', 'native-model'],
+        model: 'selector-model',
+        type: 'qoder',
+      }),
+    ).toEqual(['-m', 'native-model']);
+    expect(
+      buildHeteroExecArgs({
+        args: ['--model=native-model'],
+        model: 'selector-model',
+        type: 'qoder',
+      }),
+    ).toEqual(['--agent-arg=--model=native-model']);
+    expect(
+      buildHeteroSpawnArgs({
+        args: ['--reasoning-effort', 'max'],
+        effort: 'high',
+        type: 'qoder',
+      }),
+    ).toEqual(['--reasoning-effort', 'max']);
+    expect(
+      buildHeteroExecArgs({
+        args: ['--reasoning-effort=max'],
+        effort: 'high',
+        type: 'qoder',
+      }),
+    ).toEqual(['--agent-arg=--reasoning-effort=max']);
+    expect(
+      buildHeteroSpawnArgs({
+        model: HETEROGENEOUS_AGENT_DEFAULT_SELECTION,
+        type: 'qoder',
+      }),
+    ).toBeUndefined();
   });
 
   it('forwards OpenCode native args and an explicit provider/model selection', () => {
@@ -468,6 +562,18 @@ describe('codex speed mode', () => {
 });
 
 describe('resolveAgencyConfig', () => {
+  it('normalizes a legacy persisted heterogeneous provider before applying overrides', () => {
+    const shared = {
+      executionTarget: 'device',
+      heterogeneousProvider: { command: 'codex' },
+    } as unknown as Parameters<typeof resolveAgencyConfig>[0];
+
+    expect(resolveAgencyConfig(shared, { executionTarget: 'local' })).toEqual({
+      executionTarget: 'local',
+      heterogeneousProvider: { command: 'codex', type: 'codex' },
+    });
+  });
+
   it('ignores a member override when the shared execution target is fixed', () => {
     const shared = {
       boundDeviceId: 'fixed-device',

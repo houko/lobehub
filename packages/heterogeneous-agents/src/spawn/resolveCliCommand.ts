@@ -1,10 +1,14 @@
-import { exec, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { homedir, platform } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import type { LocalHeterogeneousAgentType } from '../config';
+import { HETEROGENEOUS_AGENT_CONFIGS } from '../config';
+import { resolveCliSpawnPlan } from './cliSpawn';
+
 /**
- * Shared resolver for external CLI-agent binaries (Amp / Claude Code / Codex / OpenCode / Pi).
+ * Shared resolver for external CLI-agent binaries (Amp / Claude Code / Codex / OpenCode / Pi / Qoder).
  *
  * This is the single source of truth for "given a command name, where is the
  * runnable binary?". It's consumed by BOTH spawn sites:
@@ -18,9 +22,8 @@ import { promisify } from 'node:util';
  */
 
 const execFilePromise = promisify(execFile);
-const execPromise = promisify(exec);
 
-export type HeterogeneousCliAgentType = 'amp' | 'claude-code' | 'codex' | 'opencode' | 'pi';
+export type HeterogeneousCliAgentType = LocalHeterogeneousAgentType;
 
 /**
  * Resolution result. A structural subset of the desktop `BinaryManager`'s
@@ -55,13 +58,12 @@ interface ResolvedCommand {
 const isWindows = () => platform() === 'win32';
 let shellPathPromise: Promise<string | undefined> | undefined;
 
-// Reject anything that could break out of the `cmd /c "<path>" --version`
-// shell line we build for Windows .cmd shims (see `detectValidatedCommand`).
-// User-supplied custom commands flow through here via `detectHeterogeneousCliCommand`.
+// Reject shell syntax in user-supplied custom commands instead of treating it
+// as part of a command name.
 const WINDOWS_SHELL_METAS = /[&|;<>^`!"]/;
 
-// Extensions we can actually execute on Windows.
-// `.exe` runs directly via `execFile`, `.cmd` / `.bat` runs via `cmd.exe`.
+// Extensions eligible for execution on Windows. `.exe` runs directly, while
+// supported `.cmd` / `.bat` shims are unwrapped by `resolveCliSpawnPlan`.
 // `.ps1` and extensionless wrappers (npm sometimes drops a Unix shell script
 // next to the `.cmd` shim) are deliberately excluded — we can't run them.
 //
@@ -182,6 +184,15 @@ const resolveCommandPath = async (command: string): Promise<ResolvedCommand | un
   return { env: lookupEnv, path: lines[0] };
 };
 
+const execResolvedCommand = async (command: string, args: string[], env?: NodeJS.ProcessEnv) => {
+  const spawnPlan = await resolveCliSpawnPlan(command, args);
+  return execFilePromise(spawnPlan.command, spawnPlan.args, {
+    env,
+    timeout: 5000,
+    windowsHide: true,
+  });
+};
+
 /**
  * Resolve a command via which/where, then confirm it's the binary we expect by
  * matching `--version` output against a keyword or output pattern (avoids
@@ -206,18 +217,7 @@ export const detectValidatedCommand = async (
   const { env, path: resolvedPath } = resolvedCommand;
 
   try {
-    const needsShell = isWindows() && /\.(?:cmd|bat)$/i.test(resolvedPath);
-    const { stderr, stdout } = needsShell
-      ? await execPromise(`"${resolvedPath}" ${validateFlag}`, {
-          env,
-          timeout: 5000,
-          windowsHide: true,
-        })
-      : await execFilePromise(resolvedPath, [validateFlag], {
-          env,
-          timeout: 5000,
-          windowsHide: true,
-        });
+    const { stderr, stdout } = await execResolvedCommand(resolvedPath, [validateFlag], env);
     const output = `${stdout}\n${stderr}`.trim();
     const loweredOutput = output.toLowerCase();
     const matchesKeyword = validateKeywords?.some((keyword) =>
@@ -264,18 +264,18 @@ const HETEROGENEOUS_CLI_AGENT_OPTIONS = {
     // Pi prints a bare semantic version for `--version`.
     validatePattern: /^v?\d+\.\d+\.\d+(?:[-+][\dA-Za-z.-]+)?$/,
   },
+  'qoder': {
+    // Qoder prints a bare semantic version for `--version`.
+    validatePattern: /^v?\d+\.\d+\.\d+(?:[-+][\dA-Za-z.-]+)?$/,
+  },
 } as const satisfies Record<HeterogeneousCliAgentType, ValidateOptions>;
 
 // The default (bare) command each agent type is shipped to run. The well-known
 // fallback locations below hold *this* binary, so they may only be probed when
 // the requested command is the default — never for a custom command.
-export const DEFAULT_HETERO_COMMAND: Record<HeterogeneousCliAgentType, string> = {
-  'amp': 'amp',
-  'claude-code': 'claude',
-  'codex': 'codex',
-  'opencode': 'opencode',
-  'pi': 'pi',
-};
+export const DEFAULT_HETERO_COMMAND = Object.fromEntries(
+  HETEROGENEOUS_AGENT_CONFIGS.map(({ defaultCommand, type }) => [type, defaultCommand]),
+) as Record<HeterogeneousCliAgentType, string>;
 
 // Well-known absolute install locations probed when a bare command isn't on
 // PATH. This covers GUI-launched apps with a lean launchd PATH: Claude's
@@ -336,6 +336,16 @@ const getWellKnownCommandPaths = (agentType: HeterogeneousCliAgentType): string[
         path.join(homedir(), '.local', 'bin', 'pi'),
         path.join(homedir(), '.npm-global', 'bin', 'pi'),
         path.join(homedir(), 'Library', 'pnpm', 'pi'),
+      ];
+    }
+    case 'qoder': {
+      if (platform() !== 'darwin' && platform() !== 'linux') return [];
+
+      return [
+        path.join(homedir(), '.local', 'bin', 'qodercli'),
+        path.join(homedir(), '.bun', 'bin', 'qodercli'),
+        path.join(homedir(), '.npm-global', 'bin', 'qodercli'),
+        path.join(homedir(), 'Library', 'pnpm', 'qodercli'),
       ];
     }
     default: {

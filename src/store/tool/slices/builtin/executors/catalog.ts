@@ -4,6 +4,7 @@ import { browserExecutor } from '@lobechat/builtin-tool-browser/client/executor'
 import { calculatorExecutor } from '@lobechat/builtin-tool-calculator/executor';
 import { cloudSandboxExecutor } from '@lobechat/builtin-tool-cloud-sandbox/executor';
 import { credsExecutor } from '@lobechat/builtin-tool-creds/executor';
+import { goalExecutor } from '@lobechat/builtin-tool-goal/client/executor';
 import { groupAgentBuilderExecutor } from '@lobechat/builtin-tool-group-agent-builder/executor';
 import { groupManagementExecutor } from '@lobechat/builtin-tool-group-management/executor';
 import { imageGenerationExecutor } from '@lobechat/builtin-tool-image-generation/executor';
@@ -20,6 +21,7 @@ import {
   codexExecutor,
   openCodeExecutor,
   piExecutor,
+  qoderExecutor,
 } from './heteroCli';
 import { activatorExecutor } from './lobe-activator';
 import { agentDocumentsExecutor } from './lobe-agent-documents';
@@ -41,6 +43,7 @@ export const builtinToolExecutors = [
   codexExecutor,
   openCodeExecutor,
   piExecutor,
+  qoderExecutor,
   agentBuilderExecutor,
   agentDocumentsExecutor,
   agentManagementExecutor,
@@ -49,6 +52,7 @@ export const builtinToolExecutors = [
   credsExecutor,
   groupAgentBuilderExecutor,
   groupManagementExecutor,
+  goalExecutor,
   imageGenerationExecutor,
   knowledgeBaseExecutor,
   browserExecutor,

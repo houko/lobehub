@@ -153,6 +153,24 @@ describe('spawnAgent', () => {
     for (const event of events) expect(event.operationId).toBe('op-1');
   });
 
+  it('fails before spawn when the configured working directory no longer exists', async () => {
+    const missingCwd = path.join(os.tmpdir(), `lobehub-missing-cwd-${Date.now()}`);
+    const { spawnAgent } = await import('./spawnAgent');
+
+    await expect(
+      spawnAgent({
+        agentType: 'codex',
+        cwd: missingCwd,
+        operationId: 'op-missing-cwd',
+        prompt: 'hello',
+      }),
+    ).rejects.toMatchObject({
+      code: 'HETERO_WORKING_DIRECTORY_NOT_FOUND',
+      workingDirectory: missingCwd,
+    });
+    expect(spawnCalls).toHaveLength(0);
+  });
+
   it('passes --include-partial-messages only when includePartialMessages=true', async () => {
     nextFakeProc = createFakeProc().proc;
     const { spawnAgent } = await import('./spawnAgent');
@@ -179,6 +197,49 @@ describe('spawnAgent', () => {
     const resumeIdx = args.indexOf('--resume');
     expect(resumeIdx).toBeGreaterThan(-1);
     expect(args[resumeIdx + 1]).toBe('cc-prev-123');
+  });
+
+  it('spawns Qoder with its stream-json protocol, permission mode, and resume id', async () => {
+    const fake = createFakeProc({ stdoutChunks: [ccInit] });
+    nextFakeProc = fake.proc;
+
+    const { spawnAgent } = await import('./spawnAgent');
+    const handle = await spawnAgent({
+      agentType: 'qoder',
+      operationId: 'op-qoder',
+      prompt: 'continue with Qoder',
+      resumeSessionId: 'qoder-prev-123',
+    });
+    fake.start();
+
+    for await (const _event of handle.events) {
+      // Drain the stream so the adapter captures the session id.
+    }
+    await handle.exit;
+
+    expect(spawnCalls[0]).toMatchObject({
+      command: 'qodercli',
+    });
+    expect(spawnCalls[0].args).toEqual([
+      '-p',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
+      '--include-partial-messages',
+      '--permission-mode',
+      'bypass_permissions',
+      '--resume',
+      'qoder-prev-123',
+    ]);
+    expect(JSON.parse(fake.stdinWrites[0].trim())).toEqual({
+      message: {
+        content: [{ text: 'continue with Qoder', type: 'text' }],
+        role: 'user',
+      },
+      parent_tool_use_id: null,
+      type: 'user',
+    });
   });
 
   it('spawns AMP with its private headless stream-json protocol', async () => {
@@ -522,7 +583,7 @@ describe('spawnAgent', () => {
     const { spawnAgent } = await import('./spawnAgent');
     await expect(
       spawnAgent({ agentType: 'kimi-cli', operationId: 'op-1', prompt: 'hi' }),
-    ).rejects.toThrow(/unsupported agent type/);
+    ).rejects.toThrow('Unknown local heterogeneous agent type: "kimi-cli"');
   });
 
   it('events iterator drains all pipeline events including the trailing flush', async () => {

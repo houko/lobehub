@@ -15,9 +15,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const renderShowPortrait = async ({
   isLogin,
   portraitEnabled,
+  userPreference = true,
 }: {
   isLogin: boolean;
   portraitEnabled: boolean;
+  userPreference?: boolean;
 }) => {
   vi.resetModules();
 
@@ -31,6 +33,12 @@ const renderShowPortrait = async ({
   vi.doMock('@/store/user', () => ({ useUserStore: (selector: () => boolean) => selector() }));
   vi.doMock('@/store/user/slices/auth/selectors', () => ({
     authSelectors: { isLogin: () => isLogin },
+  }));
+  // Stubbed for the same reason as the user store: importing the real one drags
+  // the whole global-store graph into a test about one boolean.
+  vi.doMock('@/store/global', () => ({ useGlobalStore: (selector: () => boolean) => selector() }));
+  vi.doMock('@/store/global/selectors', () => ({
+    systemStatusSelectors: { showHomePortrait: () => userPreference },
   }));
 
   const { useShowPortrait } = await import('../useShowPortrait');
@@ -57,5 +65,20 @@ describe('useShowPortrait', () => {
     await expect(renderShowPortrait({ isLogin: false, portraitEnabled: true })).resolves.toBe(
       false,
     );
+  });
+
+  it('hides it when the user turned it off in Customize home', async () => {
+    await expect(
+      renderShowPortrait({ isLogin: true, portraitEnabled: true, userPreference: false }),
+    ).resolves.toBe(false);
+  });
+
+  // The distribution flag sits above the user's switch: where no portrait
+  // ships, turning it back on from the UI must not resurrect the off-origin
+  // request the flag exists to prevent.
+  it('stays hidden when the distribution disables it, whatever the user set', async () => {
+    await expect(
+      renderShowPortrait({ isLogin: true, portraitEnabled: false, userPreference: true }),
+    ).resolves.toBe(false);
   });
 });

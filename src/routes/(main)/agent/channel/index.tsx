@@ -8,7 +8,7 @@ import { Navigate, useNavigate, useParams } from 'react-router';
 
 import NotFound from '@/components/404';
 import AsyncBoundary from '@/components/AsyncBoundary';
-import Loading from '@/components/Loading/BrandTextLoading';
+import SurfaceSkeleton from '@/components/Skeleton/Surface';
 import ResourceConfigAccessGate from '@/features/ResourcePermission/ResourceConfigAccessGate';
 import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
@@ -139,7 +139,7 @@ const ChannelContent = memo(() => {
           error={error}
           errorVariant={'block'}
           isLoading={isLoading}
-          loading={<Loading debugId="ChannelPage" />}
+          loading={<SurfaceSkeleton header={false} variant={'grid'} />}
           onRetry={() => {
             mutatePlatforms();
             mutateProviders();
@@ -176,7 +176,7 @@ const ChannelContent = memo(() => {
   );
 });
 
-const ChannelPage = memo(() => {
+const ChannelPage = () => {
   const { aid } = useParams<{ aid?: string }>();
 
   // The nav entry is hidden by the same flag, so the only way here is a typed
@@ -193,6 +193,6 @@ const ChannelPage = memo(() => {
       <ChannelContent />
     </ResourceConfigAccessGate>
   );
-});
+};
 
 export default ChannelPage;

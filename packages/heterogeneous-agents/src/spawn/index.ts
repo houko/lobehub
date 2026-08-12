@@ -21,6 +21,7 @@ export {
 export {
   classifyHeteroProcessFailure,
   type ClassifyHeteroProcessFailureParams,
+  HETERO_WORKING_DIRECTORY_NOT_FOUND,
   isHeteroStatusGuideErrorData,
 } from './classifyProcessFailure';
 export {
@@ -89,6 +90,7 @@ export {
 } from './ensureResumeTranscript';
 export {
   AMP_BASE_ARGS,
+  buildQoderArgs,
   CLAUDE_CODE_BASE_ARGS,
   CODEX_BYPASS_APPROVALS_AND_SANDBOX_ARG,
   CODEX_DEFAULT_EXECUTION_ARGS,
@@ -96,6 +98,8 @@ export {
   CODEX_REQUIRED_ARGS,
   OPENCODE_BASE_ARGS,
   PI_BASE_ARGS,
+  QODER_BASE_ARGS,
+  type QoderSpawnArgsOptions,
   spawnAgent,
   type SpawnAgentHandle,
   type SpawnAgentOptions,
