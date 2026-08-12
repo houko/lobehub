@@ -132,7 +132,7 @@ export function parse(messages: Message[], messageGroups?: MessageGroupMetadata[
     // Promote `metadata.usage` (canonical storage) onto the top-level `usage`
     // field that UIChatMessage consumers (Extras token badge, tokenCounter,
     // etc.) read from. The DB layer stores token usage inside the metadata
-    // JSONB column — executors on every path (Gateway, hetero-agent CLI) write
+    // JSONB COLUMN — executors on every path (Gateway, hetero-agent CLI) write
     // there — but no server-side transform lifts it out. Doing it here keeps
     // the promotion in one place, close to where display shapes are built,
     // and works for both desktop (local PGlite) and web (remote Postgres).
@@ -143,7 +143,7 @@ export function parse(messages: Message[], messageGroups?: MessageGroupMetadata[
     return next;
   });
 
-  // Historical LOBE-12497 data can contain a taskCallback and a tool result as
+  // Historical data can contain a taskCallback and a tool result as
   // sibling branches under the same assistant tool-use shell. Normal branch
   // resolution must keep choosing one conversational continuation, but hiding
   // the inactive callback also hides the only user-visible record that a task
