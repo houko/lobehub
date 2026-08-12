@@ -239,6 +239,11 @@ export default defineConfig(async (env) => {
     define: {
       ...sharedRendererDefine({ isElectron: true, isMobile: false }),
       __MAIN_VERSION__: JSON.stringify(desktopPackageJson.version),
+      // The renderer builds "copy link" URLs from this (electron sync selectors).
+      // The main process already resolves cloud mode through the same variable,
+      // so baking it here is what keeps the links the user copies pointing at the
+      // host the app is signed in to rather than the official cloud.
+      'process.env.OFFICIAL_CLOUD_SERVER': JSON.stringify(process.env.OFFICIAL_CLOUD_SERVER),
     },
     envDir: __dirname,
     envPrefix: ['RENDERER_VITE_', 'VITE_'],
