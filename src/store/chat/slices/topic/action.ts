@@ -18,6 +18,7 @@ import {
   getProjectionStoreState,
   nextProjectionObservedAt,
   selectChatTopicListItem,
+  selectChatTopicProjectionIds,
   selectChatTopicsIndex,
   selectChatTopicsItems,
   useProjectionStore,
@@ -755,8 +756,6 @@ export class ChatTopicActionImpl {
       source: 'network',
     });
     const projectionScope = getProjectionStoreState().scopes[scope];
-    const record = projectionScope?.records.topic[topicId];
-    if (record?.tombstoneAt) return false;
     const resolvedFresh = projectionScope
       ? selectChatTopicListItem(projectionScope, topicId)
       : undefined;
@@ -1526,8 +1525,6 @@ export class ChatTopicActionImpl {
           if (scope !== getCacheScope()) return;
           const projectionScope = getProjectionStoreState().scopes[scope];
           const canonical = data.flatMap((item) => {
-            const record = projectionScope?.records.topic[item.id];
-            if (record?.tombstoneAt) return [];
             const selected = projectionScope
               ? selectChatTopicListItem(projectionScope, item.id)
               : undefined;
@@ -1545,8 +1542,6 @@ export class ChatTopicActionImpl {
       const projectionScope = state.scopes[scope];
       if (!request.data || !projectionScope) return undefined;
       return request.data.flatMap((item) => {
-        const record = projectionScope.records.topic[item.id];
-        if (record?.tombstoneAt) return [];
         const selected = selectChatTopicListItem(projectionScope, item.id);
         return selected ? [selected as ChatTopic] : [];
       });
@@ -1619,9 +1614,17 @@ export class ChatTopicActionImpl {
     const observedAt = nextProjectionObservedAt();
     const currentUserId = userProfileSelectors.userId(useUserStore.getState());
     const topics = this.#get().topicDataMap[topicMapKey({ agentId: activeAgentId })]?.items ?? [];
-    const topicIds = topics
+    const legacyTopicIds = topics
       .filter((topic) => scope !== 'own' || topic.userId === currentUserId)
       .map(({ id }) => id);
+    const projectedTopicIds =
+      scope === 'own' && !currentUserId
+        ? []
+        : selectChatTopicProjectionIds(getProjectionStoreState().scopes[projectionScope], {
+            agentId: activeAgentId,
+            ...(scope === 'own' ? { userId: currentUserId } : {}),
+          });
+    const topicIds = [...new Set([...legacyTopicIds, ...projectedTopicIds])];
 
     await topicService.removeTopicsByAgentId(activeAgentId, scope);
     getProjectionStoreState().deleteChatTopicProjections(projectionScope, topicIds, observedAt);
@@ -1642,9 +1645,17 @@ export class ChatTopicActionImpl {
     const observedAt = nextProjectionObservedAt();
     const currentUserId = userProfileSelectors.userId(useUserStore.getState());
     const topics = this.#get().topicDataMap[topicMapKey({ groupId })]?.items ?? [];
-    const topicIds = topics
+    const legacyTopicIds = topics
       .filter((topic) => scope !== 'own' || topic.userId === currentUserId)
       .map(({ id }) => id);
+    const projectedTopicIds =
+      scope === 'own' && !currentUserId
+        ? []
+        : selectChatTopicProjectionIds(getProjectionStoreState().scopes[projectionScope], {
+            groupId,
+            ...(scope === 'own' ? { userId: currentUserId } : {}),
+          });
+    const topicIds = [...new Set([...legacyTopicIds, ...projectedTopicIds])];
 
     await topicService.removeTopicsByGroupId(groupId, scope);
     getProjectionStoreState().deleteChatTopicProjections(projectionScope, topicIds, observedAt);
@@ -1659,17 +1670,17 @@ export class ChatTopicActionImpl {
   removeAllTopics = async (): Promise<void> => {
     const projectionScope = getCacheScope();
     const observedAt = nextProjectionObservedAt();
-    const topicIds = Object.values(this.#get().topicDataMap).flatMap(({ items }) =>
+    const legacyTopicIds = Object.values(this.#get().topicDataMap).flatMap(({ items }) =>
       items.map(({ id }) => id),
     );
+    const projectedTopicIds = selectChatTopicProjectionIds(
+      getProjectionStoreState().scopes[projectionScope],
+    );
+    const topicIds = [...new Set([...legacyTopicIds, ...projectedTopicIds])];
     const { refreshTopic } = this.#get();
 
     await topicService.removeAllTopic();
-    getProjectionStoreState().deleteChatTopicProjections(
-      projectionScope,
-      [...new Set(topicIds)],
-      observedAt,
-    );
+    getProjectionStoreState().deleteChatTopicProjections(projectionScope, topicIds, observedAt);
     await refreshTopic();
     // every topic is gone — wipe all cached message lists
     void evictMessageCache(() => true);
