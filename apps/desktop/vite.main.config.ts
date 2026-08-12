@@ -109,6 +109,11 @@ export default defineConfig(async (env) => {
     define: {
       ...processEnvDefine,
       'process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS': JSON.stringify(externalNavigationHosts),
+      // Same trap as OFFICIAL_CLOUD_SERVER below: the schema in `env.ts` already
+      // accepted DEVICE_GATEWAY_URL, but nothing baked it in, so a packaged app
+      // fell through to the official gateway however the build was configured.
+      'process.env.DEVICE_GATEWAY_ENABLED': JSON.stringify(process.env.DEVICE_GATEWAY_ENABLED),
+      'process.env.DEVICE_GATEWAY_URL': JSON.stringify(process.env.DEVICE_GATEWAY_URL),
       // `env.ts` reads this and falls back to OFFICIAL_URL, but nothing baked it
       // in — and a packaged app has no shell to inherit it from, so a build
       // configured for another deployment still shipped pointing at the official

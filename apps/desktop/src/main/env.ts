@@ -59,6 +59,8 @@ const getRuntimeEnv = () => ({
   ...process.env,
   DESKTOP_BACKEND_PROXY_RETHROW_ERRORS: process.env.DESKTOP_BACKEND_PROXY_RETHROW_ERRORS,
   DESKTOP_EXTERNAL_NAVIGATION_HOSTS: process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS,
+  DEVICE_GATEWAY_ENABLED: process.env.DEVICE_GATEWAY_ENABLED,
+  DEVICE_GATEWAY_URL: process.env.DEVICE_GATEWAY_URL,
   OFFICIAL_CLOUD_SERVER: process.env.OFFICIAL_CLOUD_SERVER,
   UPDATE_CHANNEL: process.env.UPDATE_CHANNEL,
   UPDATE_SERVER_URL: process.env.UPDATE_SERVER_URL,
@@ -89,6 +91,14 @@ export const getDesktopEnv = memoize(() =>
       DESKTOP_BACKEND_PROXY_RETHROW_ERRORS: envBoolean(false),
 
       DESKTOP_EXTERNAL_NAVIGATION_HOSTS: z.string().optional().default(''),
+
+      // Whether this build ships with the device gateway on by default.
+      //
+      // The gateway is a hosted rendezvous service. A distribution that does not
+      // run one has an app opening a WebSocket to somebody else's host on every
+      // launch, so it needs to be able to turn the default off at build time.
+      // The user-facing toggle is unaffected — this only sets where it starts.
+      DEVICE_GATEWAY_ENABLED: envBoolean(true),
 
       // device gateway url override (dev: point at a local `wrangler dev` instance,
       // e.g. http://localhost:8787). Falls back to the stored value, then the
