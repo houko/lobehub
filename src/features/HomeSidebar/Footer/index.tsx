@@ -1,6 +1,10 @@
 'use client';
 
-import { DESKTOP_APP_ENABLED, SOCIAL_URL } from '@lobechat/business-const';
+import {
+  DESKTOP_APP_ENABLED,
+  FOOTER_HIDDEN_MENU_KEYS,
+  SOCIAL_URL,
+} from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import { useAnalytics } from '@lobehub/analytics/react';
 import { type MenuProps } from '@lobehub/ui';
@@ -73,6 +77,39 @@ const collectMenuKeys = (items: FooterMenuItems): string[] =>
     .filter((key): key is string | number => Boolean(key))
     .map(String);
 
+const isDivider = (item: FooterMenuItems[number]) =>
+  !item || (item as { type?: string }).type === 'divider';
+
+/**
+ * Drop the entries this distribution hides, then repair the separators they
+ * leave behind.
+ *
+ * The dividers are positional — they were written to sit between groups that
+ * exist upstream — so removing entries strands them: two hidden neighbours
+ * collapse into a double rule, and hiding a trailing group leaves a line under
+ * the last item with nothing after it. Both read as a menu that failed to
+ * render rather than one that is deliberately short.
+ */
+const applyHiddenKeys = (items: FooterMenuItems): FooterMenuItems => {
+  if (FOOTER_HIDDEN_MENU_KEYS.length === 0) return items;
+
+  const kept = items.filter((item) => {
+    if (isDivider(item)) return true;
+    const key = (item as { key?: string | number }).key;
+    return !key || !FOOTER_HIDDEN_MENU_KEYS.includes(String(key));
+  });
+
+  return kept.filter((item, index) => {
+    if (!isDivider(item)) return true;
+    // Leading, trailing, or doubled-up: a divider only earns its place with a
+    // surviving entry on both sides of it.
+    const hasEntryBefore = kept.slice(0, index).some((other) => !isDivider(other));
+    const hasEntryAfter = kept.slice(index + 1).some((other) => !isDivider(other));
+    const isFirstOfRun = index === 0 || !isDivider(kept[index - 1]);
+    return hasEntryBefore && hasEntryAfter && isFirstOfRun;
+  });
+};
+
 const Footer = memo(() => {
   const { t } = useTranslation('common');
   const { analytics } = useAnalytics();
@@ -111,7 +148,7 @@ const Footer = memo(() => {
     helpMenuItems: MenuProps['items'];
     trackedMenuKeys: string[];
   }>(() => {
-    const ownItems: FooterMenuItems = [
+    const allItems: FooterMenuItems = [
       ...(footer.showSettingsEntry && !isDevMode
         ? [
             {
@@ -205,6 +242,8 @@ const Footer = memo(() => {
         : []),
     ];
 
+    const ownItems = applyHiddenKeys(allItems);
+
     return {
       helpMenuItems: [
         ...injectMenuTracking(ownItems, trackMenuClick),
@@ -262,7 +301,7 @@ const Footer = memo(() => {
                 size={16}
               />
             </DropdownMenu>
-            {!footer.hideGitHub && (
+            {!footer.hideGitHub && !FOOTER_HIDDEN_MENU_KEYS.includes('github') && (
               <a aria-label={'GitHub'} href={GITHUB} rel="noopener noreferrer" target={'_blank'}>
                 <ActionIcon icon={GithubIcon} size={16} title={'GitHub'} />
               </a>

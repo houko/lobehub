@@ -82,6 +82,23 @@ export const HOME_MODEL_SHOWCASE_ENABLED = true;
 export const SETTINGS_HIDDEN_TABS: readonly string[] = [];
 
 /**
+ * Entries this distribution drops from the sidebar help menu, by item key:
+ * `setting`, `inviteFriend`, `docs`, `feedback`, `discord`, `changelog`,
+ * `get-app`, `github`, `eval`.
+ *
+ * Same shape and reasoning as SETTINGS_HIDDEN_TABS. Most of this menu points
+ * outward — the hosted docs site, the LobeHub Discord, the feedback form, the
+ * upstream GitHub repo — so on a closed network the entries are dead links, and
+ * on any private deployment they route users to somebody else's support channel
+ * for a product that is not the one they are using.
+ *
+ * `github` covers the standalone icon in the expanded layout too: hiding the
+ * menu entry while leaving a GitHub button beside it would say two things at
+ * once. Dividers left stranded by the hidden entries collapse with them.
+ */
+export const FOOTER_HIDDEN_MENU_KEYS: readonly string[] = [];
+
+/**
  * Whether the side-panel copilots (page editor, task manager) let the user
  * switch which agent answers.
  *

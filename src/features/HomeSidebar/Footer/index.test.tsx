@@ -1,9 +1,10 @@
+import type * as BusinessConst from '@lobechat/business-const';
 import { DESKTOP_APP_ENABLED } from '@lobechat/business-const';
 import type * as LobechatConst from '@lobechat/const';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const analyticsTrack = vi.fn();
 
@@ -28,6 +29,7 @@ interface RenderFooterOptions {
   billboardItems?: unknown[];
   desktop?: boolean;
   enableBusinessFeatures?: boolean;
+  hiddenMenuKeys?: readonly string[];
   hideGitHub?: boolean;
   homeSidebar?: boolean;
 }
@@ -39,6 +41,7 @@ const renderFooter = async ({
   billboardItems = [],
   desktop = false,
   enableBusinessFeatures = false,
+  hiddenMenuKeys,
   homeSidebar = false,
   hideGitHub = true,
 }: RenderFooterOptions = {}) => {
@@ -58,6 +61,15 @@ const renderFooter = async ({
     settings: { general: { isDevMode: false } },
   };
 
+  // Partial mock so the rest of the branding surface stays real; overriding
+  // only the deny-list keeps both halves of it testable whatever this build
+  // ships.
+  if (hiddenMenuKeys) {
+    vi.doMock('@lobechat/business-const', async (importOriginal) => ({
+      ...(await importOriginal<typeof BusinessConst>()),
+      FOOTER_HIDDEN_MENU_KEYS: hiddenMenuKeys,
+    }));
+  }
   vi.doMock('@lobechat/const', async (importOriginal) => {
     const actual = (await importOriginal()) as typeof LobechatConst;
 
@@ -146,9 +158,23 @@ const renderFooter = async ({
   );
 };
 
+/**
+ * Pay the module graph's first-import cost once, outside any test's clock.
+ *
+ * Footer pulls in a wide graph, and transforming it cold takes longer than the
+ * per-test timeout on its own — enough that whichever test happened to run
+ * first would time out while every test after it passed on the warm cache. That
+ * reads as a flaky assertion in one test rather than a fixed cost paid by
+ * whoever goes first, so it is paid here instead.
+ */
+beforeAll(async () => {
+  await import('./index');
+}, 120_000);
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.doUnmock('@lobechat/business-const');
   vi.doUnmock('@lobechat/const');
   vi.doUnmock('@lobehub/analytics/react');
   vi.doUnmock('@/components/ChangelogModal');
@@ -163,6 +189,10 @@ afterEach(() => {
   vi.doUnmock('@/store/user');
 });
 
+// `hiddenMenuKeys: []` on the cases below is deliberate: they assert on entries
+// (invite friend, GitHub) that FOOTER_HIDDEN_MENU_KEYS lets a distribution drop,
+// so they state the upstream default rather than inheriting whatever this build
+// ships. The deny-list itself is covered by its own cases.
 describe('Footer help menu tracking', () => {
   // The entry only exists where the distribution actually ships an app to
   // download, so assert whichever half is true for this build rather than
@@ -190,7 +220,7 @@ describe('Footer help menu tracking', () => {
     'omits Get App when the distribution ships no downloadable app',
     async () => {
       const user = userEvent.setup();
-      await renderFooter({ hideGitHub: false });
+      await renderFooter({ hiddenMenuKeys: [], hideGitHub: false });
 
       await user.click(screen.getByRole('button', { name: 'Help' }));
 
@@ -210,9 +240,57 @@ describe('Footer help menu tracking', () => {
     expect(screen.queryByRole('link', { name: 'Get App' })).not.toBeInTheDocument();
   }, 20000);
 
+  it('drops the entries the distribution hides, and the separators they strand', async () => {
+    const user = userEvent.setup();
+    await renderFooter({
+      enableBusinessFeatures: true,
+      hiddenMenuKeys: ['inviteFriend', 'docs', 'feedback', 'discord', 'github'],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Help' }));
+
+    for (const name of ['Invite a friend', 'Docs', 'Feedback', 'Discord']) {
+      expect(screen.queryByText(name)).not.toBeInTheDocument();
+    }
+
+    // What the deployment does serve itself stays.
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.getByText('Changelog')).toBeInTheDocument();
+
+    // Settings and Changelog were separated by two rules with the hidden block
+    // between them; one survives, and neither end of the menu is left with a
+    // rule pointing at nothing.
+    const menu = screen.getByRole('menu');
+    expect(menu.querySelectorAll('[role="separator"], .lobe-dropdown-menu-separator')).toHaveLength(
+      1,
+    );
+  }, 20000);
+
+  it('reports only the surviving keys when the menu is opened', async () => {
+    const user = userEvent.setup();
+    await renderFooter({
+      enableBusinessFeatures: true,
+      hiddenMenuKeys: ['inviteFriend', 'docs', 'feedback', 'discord', 'github'],
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Help' }));
+
+    const openedCall = analyticsTrack.mock.calls.find(
+      ([event]) => event?.name === 'home_footer_menu_opened',
+    );
+    const keys = (openedCall![0].properties.keys as string).split(',');
+
+    // A key that can never be clicked must not sit in the CTR denominator.
+    expect(keys).not.toContain('inviteFriend');
+    expect(keys).not.toContain('docs');
+    expect(keys).toContain('changelog');
+  }, 20000);
+
+
+
   it('tracks menu open with the visible item keys', async () => {
     const user = userEvent.setup();
-    await renderFooter({ enableBusinessFeatures: true });
+    await renderFooter({ enableBusinessFeatures: true, hiddenMenuKeys: [] });
 
     await user.click(screen.getByRole('button', { name: 'Help' }));
 
@@ -225,7 +303,7 @@ describe('Footer help menu tracking', () => {
 
   it('tracks a unified click event when the invite friend entry is clicked', async () => {
     const user = userEvent.setup();
-    await renderFooter({ enableBusinessFeatures: true });
+    await renderFooter({ enableBusinessFeatures: true, hiddenMenuKeys: [] });
 
     await user.click(screen.getByRole('button', { name: 'Help' }));
     await user.click(await screen.findByText('Invite a friend'));
@@ -250,6 +328,7 @@ describe('Footer help menu tracking', () => {
     await renderFooter({
       billboardItems: [{ key: 'billboard-promo', label: 'Promo', onClick: vi.fn() }],
       enableBusinessFeatures: true,
+      hiddenMenuKeys: [],
       homeSidebar: true,
     });
 
