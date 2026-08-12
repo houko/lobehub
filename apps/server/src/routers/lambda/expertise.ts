@@ -192,6 +192,25 @@ export const expertiseRouter = router({
       return { hits, lesson };
     }),
 
+  /** 人手建一个专长 —— 空态那个按钮打进来的。 */
+  createDomain: expertiseProcedure
+    .input(
+      z.object({
+        agentId: z.string(),
+        description: z.string().optional(),
+        domainFilter: z.string().min(1),
+        title: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => ctx.expertiseModel.createDomain(input)),
+
+  /** 从候选里定一个方向 —— 锚定待定那一屏的那个按钮。 */
+  chooseAnchor: expertiseProcedure
+    .input(z.object({ candidateKey: z.string(), domainId: z.string() }))
+    .mutation(async ({ ctx, input }) =>
+      ctx.expertiseModel.chooseAnchor(input.domainId, input.candidateKey),
+    ),
+
   /** 洞察是分析产物，会出错 —— 必须能被否掉。 */
   dismissInsight: expertiseProcedure
     .input(z.object({ insightId: z.string(), reason: z.string().optional() }))

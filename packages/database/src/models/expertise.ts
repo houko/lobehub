@@ -10,6 +10,7 @@ import {
   expertiseRuns,
 } from '../schemas';
 import type { LobeChatDatabase } from '../type';
+import { idGenerator } from '../utils/idGenerator';
 import { buildWorkspaceWhere } from '../utils/workspace';
 
 /**
@@ -284,6 +285,77 @@ export class ExpertiseModel {
       .where(eq(expertiseHits.lessonId, lessonId))
       .orderBy(desc(expertiseHits.createdAt))
       .limit(limit);
+
+  // ========== 写入 ==========
+
+  /**
+   * 人手建一个专长。
+   *
+   * 人自己写下的领域过滤器**就是一个已选定的锚点** —— 锚定阶段的价值在于「有人拍了板」，
+   * 模型提候选只是帮人省事。所以这里直接 anchorChosenAt = now，不留一个必须再点一次的中间态。
+   */
+  createDomain = async (params: {
+    agentId: string;
+    description?: string;
+    domainFilter: string;
+    title: string;
+  }) => {
+    const id = idGenerator('expertiseDomains');
+    const slug = `${params.title.slice(0, 40).replaceAll(/\s+/g, '-').toLowerCase()}-${id.slice(-6)}`;
+    await this.db.transaction(async (tx) => {
+      await tx.insert(expertiseDomains).values({
+        anchorChosenAt: new Date(),
+        anchorChosenByUserId: this.userId,
+        description: params.description,
+        domainFilter: params.domainFilter,
+        id,
+        seedState: 'seeded',
+        slug,
+        title: params.title,
+        userId: this.userId,
+        workspaceId: this.workspaceId,
+      });
+      await tx.insert(expertiseBindings).values({
+        addedByUserId: this.userId,
+        agentId: params.agentId,
+        domainId: id,
+        workspaceId: this.workspaceId,
+      });
+    });
+    return id;
+  };
+
+  /**
+   * 从候选里选定一个方向。
+   *
+   * 选中的那条把自己的分层、canon、过滤器写进领域本体，但 `anchorCandidates` **原样保留** ——
+   * 领域是选择不是发现，没选的那条路要留着，否则半年后没人答得上「当时选另一个会怎样」。
+   */
+  chooseAnchor = async (domainId: string, candidateKey: string) => {
+    const domain = await this.findDomain(domainId);
+    if (!domain) return false;
+    const candidate = (domain.anchorCandidates ?? []).find((c) => c.key === candidateKey);
+    if (!candidate) return false;
+
+    await this.db
+      .update(expertiseDomains)
+      .set({
+        anchorChosenAt: new Date(),
+        anchorChosenByUserId: this.userId,
+        canonEntries: candidate.canonEntries,
+        domainFilter: candidate.domainFilter,
+        evidenceSpec: candidate.evidenceSpec ?? [],
+        flow: candidate.flow ?? [],
+        layers: candidate.layers,
+        layerSource: candidate.layerSource,
+        outOfScope: candidate.outOfScope,
+        seedState: 'seeded',
+        title: candidate.title,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(expertiseDomains.id, domainId), this.scopeWhere()));
+    return true;
+  };
 
   // ========== 洞察 ==========
 
