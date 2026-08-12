@@ -194,7 +194,14 @@ export const expertiseRouter = router({
 
   /** 人手建一个专长 —— 空态那个按钮打进来的。 */
   createDomain: expertiseProcedure
-    .input(z.object({ agentId: z.string(), brief: z.string().min(1) }))
+    .input(
+      z.object({
+        agentId: z.string(),
+        brief: z.string().min(1),
+        domainFilter: z.string().min(1).optional(),
+        title: z.string().min(1).optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => ctx.expertiseModel.createDomain(input)),
 
   /** 从候选里定一个方向 —— 锚定待定那一屏的那个按钮。 */

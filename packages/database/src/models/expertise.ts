@@ -1,3 +1,4 @@
+import { parseExpertiseDomainBrief } from '@lobechat/types';
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import {
@@ -23,26 +24,6 @@ const CORE_CUT_RATIO = 0.4;
 const CORE_CUT_MIN = 2;
 
 export type ExpertiseTier = 'core' | 'niche' | 'unused';
-
-/** 名称最多这么长 —— 再长就不是名字而是一句话了，列表里也放不下。 */
-const TITLE_MAX = 18;
-
-/**
- * 从一句话里取出专长名称。
- *
- * 先在句读处切第一个分句，再剥掉「我想让它在…上变强」这类包装词，剩下的就是他在说的那件事。
- * 取不出来就退回截断 —— 名字拗口是可以事后改的，创建被卡住不是。
- */
-const deriveDomainTitle = (brief: string) => {
-  const firstClause = brief.split(/[。；;\n，,]/)[0]?.trim() || brief.trim();
-  const stripped = firstClause
-    .replace(/^(我想|我希望|希望|想)?(让|把)?(它|他|这个\s*agent|agent)?/i, '')
-    .replace(/^(在|对|针对|关于)/, '')
-    .replace(/(上|方面|这块|这件事)?(变强|更强|更专业|更好|做得更好|积累经验|学习|成长)。?$/, '')
-    .trim();
-  const title = stripped || firstClause;
-  return title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX)}…` : title;
-};
 
 export class ExpertiseModel {
   private db: LobeChatDatabase;
@@ -325,10 +306,17 @@ export class ExpertiseModel {
    * 规则式的代价是名称可能拗口，所以名称随时可改，而过滤器保留用户的原话不做改写：
    * 过滤器是这个专长唯一可执行的判据，改写它等于替用户改了判断标准。
    */
-  createDomain = async (params: { agentId: string; brief: string }) => {
+  createDomain = async (params: {
+    agentId: string;
+    brief: string;
+    domainFilter?: string;
+    title?: string;
+  }) => {
     const brief = params.brief.trim();
     const id = idGenerator('expertiseDomains');
-    const title = deriveDomainTitle(brief);
+    const parsed = parseExpertiseDomainBrief(brief);
+    const title = params.title?.trim() || parsed.title;
+    const domainFilter = params.domainFilter?.trim() || parsed.domainFilter;
     const slug = `${title.slice(0, 40).replaceAll(/\s+/g, '-').toLowerCase()}-${id.slice(-6)}`;
 
     await this.db.transaction(async (tx) => {
@@ -336,7 +324,7 @@ export class ExpertiseModel {
         anchorChosenAt: new Date(),
         anchorChosenByUserId: this.userId,
         description: brief,
-        domainFilter: brief,
+        domainFilter,
         id,
         seedState: 'seeded',
         slug,
