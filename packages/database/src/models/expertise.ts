@@ -24,6 +24,26 @@ const CORE_CUT_MIN = 2;
 
 export type ExpertiseTier = 'core' | 'niche' | 'unused';
 
+/** 名称最多这么长 —— 再长就不是名字而是一句话了，列表里也放不下。 */
+const TITLE_MAX = 18;
+
+/**
+ * 从一句话里取出专长名称。
+ *
+ * 先在句读处切第一个分句，再剥掉「我想让它在…上变强」这类包装词，剩下的就是他在说的那件事。
+ * 取不出来就退回截断 —— 名字拗口是可以事后改的，创建被卡住不是。
+ */
+const deriveDomainTitle = (brief: string) => {
+  const firstClause = brief.split(/[。；;\n，,]/)[0]?.trim() || brief.trim();
+  const stripped = firstClause
+    .replace(/^(我想|我希望|希望|想)?(让|把)?(它|他|这个\s*agent|agent)?/i, '')
+    .replace(/^(在|对|针对|关于)/, '')
+    .replace(/(上|方面|这块|这件事)?(变强|更强|更专业|更好|做得更好|积累经验|学习|成长)。?$/, '')
+    .trim();
+  const title = stripped || firstClause;
+  return title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX)}…` : title;
+};
+
 export class ExpertiseModel {
   private db: LobeChatDatabase;
   private userId: string;
@@ -294,24 +314,33 @@ export class ExpertiseModel {
    * 人自己写下的领域过滤器**就是一个已选定的锚点** —— 锚定阶段的价值在于「有人拍了板」，
    * 模型提候选只是帮人省事。所以这里直接 anchorChosenAt = now，不留一个必须再点一次的中间态。
    */
-  createDomain = async (params: {
-    agentId: string;
-    description?: string;
-    domainFilter: string;
-    title: string;
-  }) => {
+  /**
+   * 一句话建一个专长。
+   *
+   * 验收原话是「填写太麻烦了，能否改成一个输入框直接填写，然后我们做后台解析」。
+   * 用户写一句「我想让它在处理线上故障上变强，方案讨论不算」，这里拆成名称与领域过滤器。
+   *
+   * 解析目前是规则式的：首句／首个分句当名称，整段当过滤器。**不假装它是理解**——
+   * 真正的锚定要从这个 agent 的语料里读候选（那条路径还没实现），到位之后这里换成它。
+   * 规则式的代价是名称可能拗口，所以名称随时可改，而过滤器保留用户的原话不做改写：
+   * 过滤器是这个专长唯一可执行的判据，改写它等于替用户改了判断标准。
+   */
+  createDomain = async (params: { agentId: string; brief: string }) => {
+    const brief = params.brief.trim();
     const id = idGenerator('expertiseDomains');
-    const slug = `${params.title.slice(0, 40).replaceAll(/\s+/g, '-').toLowerCase()}-${id.slice(-6)}`;
+    const title = deriveDomainTitle(brief);
+    const slug = `${title.slice(0, 40).replaceAll(/\s+/g, '-').toLowerCase()}-${id.slice(-6)}`;
+
     await this.db.transaction(async (tx) => {
       await tx.insert(expertiseDomains).values({
         anchorChosenAt: new Date(),
         anchorChosenByUserId: this.userId,
-        description: params.description,
-        domainFilter: params.domainFilter,
+        description: brief,
+        domainFilter: brief,
         id,
         seedState: 'seeded',
         slug,
-        title: params.title,
+        title,
         userId: this.userId,
         workspaceId: this.workspaceId,
       });
