@@ -11,9 +11,11 @@ import { and, asc, desc, eq, isNull, max, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { AgentModel } from '@/database/models/agent';
+import { AgentSignalReviewContextModel } from '@/database/models/agentSignal/reviewContext';
 import { ExpertiseModel } from '@/database/models/expertise';
 import type { LobeChatDatabase } from '@/database/type';
 import { idGenerator } from '@/database/utils/idGenerator';
+import type { CompletionCallbackParams } from '@/server/services/agentSignal/policies/completionPolicy';
 import { AiGenerationService } from '@/server/services/aiGeneration';
 
 const MAX_CONTEXT_MESSAGES = 24;
@@ -101,6 +103,52 @@ export class ExpertiseIngestionService {
     private readonly userId: string,
     private readonly workspaceId?: string,
   ) {}
+
+  /**
+   * Runs expertise ingestion only after the existing self-review window has completed.
+   * Nightly review batches every active topic in its window; fast self-reflection reuses its
+   * single topic scope. Other self-iteration modes are deliberately ignored.
+   */
+  ingestSelfReview = async (input: CompletionCallbackParams) => {
+    const marker = input.selfIteration?.marker;
+    const agentId = marker?.agentId;
+    if (!marker || !agentId) return { ingested: 0, reason: 'missing-review-agent' } as const;
+
+    if (marker.kind === 'self-reflection' && marker.topicId) {
+      return this.ingestCompletion({
+        agentId,
+        operationId: `${input.operationId}:${marker.topicId}`,
+        topicId: marker.topicId,
+      });
+    }
+
+    if (marker.kind !== 'nightly-review' || !marker.reviewWindowStart || !marker.reviewWindowEnd) {
+      return { ingested: 0, reason: 'not-review' } as const;
+    }
+
+    const reviewContext = new AgentSignalReviewContextModel(this.db, this.userId, this.workspaceId);
+    const topics = await reviewContext.listTopicActivity({
+      agentId,
+      limit: 100,
+      windowEnd: new Date(marker.reviewWindowEnd),
+      windowStart: new Date(marker.reviewWindowStart),
+    });
+    const results = await Promise.all(
+      topics
+        .filter((topic): topic is typeof topic & { topicId: string } => Boolean(topic.topicId))
+        .map((topic) =>
+          this.ingestCompletion({
+            agentId,
+            operationId: `${input.operationId}:${topic.topicId}`,
+            topicId: topic.topicId,
+          }),
+        ),
+    );
+    return {
+      ingested: results.reduce((sum, result) => sum + result.ingested, 0),
+      reason: 'nightly-review',
+    } as const;
+  };
 
   ingestCompletion = async (input: ExpertiseCompletionInput) => {
     const expertiseModel = new ExpertiseModel(this.db, this.userId, this.workspaceId);

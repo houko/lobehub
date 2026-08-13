@@ -105,15 +105,16 @@ const createPolicyOptions = (
 
   return {
     completion: {
-      onSelfIterationCompleted: createSelfIterationCompletionHandler(
-        options.receiptStore ? { receiptStore: options.receiptStore } : {},
-      ),
-      onTopicCompleted: (input) =>
-        new ExpertiseIngestionService(
+      onSelfIterationCompleted: async (input) => {
+        await createSelfIterationCompletionHandler(
+          options.receiptStore ? { receiptStore: options.receiptStore } : {},
+        )(input);
+        await new ExpertiseIngestionService(
           context.db,
           context.userId,
           context.workspaceId,
-        ).ingestCompletion(input),
+        ).ingestSelfReview(input);
+      },
     },
     feedbackDomainJudge: {
       db: context.db,

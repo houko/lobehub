@@ -41,10 +41,6 @@ export interface CreateCompletionPolicyOptions {
    * which mode (nightly-review / self-reflection / self-feedback-intent) ran.
    */
   onSelfIterationCompleted?: (params: CompletionCallbackParams) => Promise<void>;
-  /** Ingests an ordinary completed topic turn into bound expertise domains. */
-  onTopicCompleted?: (
-    params: CompletionCallbackParams & { serializedContext?: string; topicId: string },
-  ) => Promise<unknown>;
 }
 
 export const createCompletionPolicy = (options: CreateCompletionPolicyOptions = {}) =>
@@ -53,7 +49,7 @@ export const createCompletionPolicy = (options: CreateCompletionPolicyOptions = 
       AGENT_SIGNAL_SOURCE_TYPES.agentExecutionCompleted,
       'agent.execution.completed:completion-fanout',
       async (source) => {
-        const { agentId, operationId, selfIteration, serializedContext, topicId } = source.payload;
+        const { agentId, operationId, selfIteration, topicId } = source.payload;
 
         log(
           '[completion-policy] received agent.execution.completed agentId=%s op=%s selfIteration=%s',
@@ -65,20 +61,8 @@ export const createCompletionPolicy = (options: CreateCompletionPolicyOptions = 
         );
 
         if (!agentId || !operationId) return;
-        if (!selfIteration && topicId && options.onTopicCompleted) {
-          try {
-            await options.onTopicCompleted({
-              agentId,
-              operationId,
-              ...(serializedContext ? { serializedContext } : {}),
-              topicId,
-            });
-          } catch (error) {
-            console.error('[completionPolicy] expertise ingestion failed', { agentId, error });
-          }
-          return;
-        }
-        // Marker-driven self-iteration runs use the existing receipt projection path.
+        // Ordinary foreground completions stay cheap. Post-processing is attached to marked
+        // self-review / self-reflection completions, after their bounded context window closes.
         if (!selfIteration) return;
         if (!options.onSelfIterationCompleted) {
           log('[completion-policy] no onSelfIterationCompleted wired — skipping projection');
