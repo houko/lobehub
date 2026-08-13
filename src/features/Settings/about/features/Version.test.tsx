@@ -1,3 +1,4 @@
+import type * as BusinessConst from '@lobechat/business-const';
 import type { UpdaterState } from '@lobechat/electron-client-ipc';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,17 @@ import Version from './Version';
 
 const flags = { enableCheckUpdates: true, showChangelog: true };
 const electron = { ipc: {} as unknown, updaterState: { stage: 'idle' } as UpdaterState };
+
+// Partial mock so the rest of the branding surface stays real. Overriding only
+// the one slot keeps both of its states testable whatever this build ships.
+const branding = { changelogEnabled: true };
+
+vi.mock('@lobechat/business-const', async (importOriginal) => ({
+  ...(await importOriginal<typeof BusinessConst>()),
+  get CHANGELOG_ENABLED() {
+    return branding.changelogEnabled;
+  },
+}));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -48,6 +60,7 @@ vi.mock('@/store/serverConfig', () => ({
 }));
 
 beforeEach(() => {
+  branding.changelogEnabled = true;
   flags.enableCheckUpdates = true;
   flags.showChangelog = true;
   electron.ipc = {};
@@ -69,7 +82,19 @@ describe('About > Version', () => {
     expect(screen.queryByText('Changelog')).not.toBeInTheDocument();
   });
 
-  it('keeps the changelog link when the flag is on', () => {
+  it('hides the changelog link when the build ships no changelog', () => {
+    branding.changelogEnabled = false;
+
+    render(<Version />);
+
+    // Distinct from the flag above, and the reason both exist: the flag comes
+    // from server config, so it can only say "this deployment hides it today".
+    // A build with no changelog of its own must not be able to show the link at
+    // all, whatever config it is later handed.
+    expect(screen.queryByText('Changelog')).not.toBeInTheDocument();
+  });
+
+  it('keeps the changelog link when both the build and the flag allow it', () => {
     render(<Version />);
 
     expect(screen.getByText('Changelog')).toBeInTheDocument();

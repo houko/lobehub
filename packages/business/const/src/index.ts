@@ -56,6 +56,20 @@ export const EXTERNAL_INTEGRATIONS_ENABLED = true;
 export const DESKTOP_APP_ENABLED = true;
 
 /**
+ * Whether this distribution has a changelog to point users at.
+ *
+ * `CHANGELOG_URL` is the hosted site's, so a rebranded or self-hosted build
+ * offering it sends users to another product's release notes, on another
+ * product's release cadence, over a network a closed deployment may not have.
+ *
+ * The `changelog` feature flag governs the same surfaces and stays in force,
+ * but it is resolved from server config at runtime — which makes it the wrong
+ * tool for a build that must simply never show the entry. Turn this off and it
+ * is gone from the artifact, whatever the deployment's flags say.
+ */
+export const CHANGELOG_ENABLED = true;
+
+/**
  * Whether the home composer shows the "New" model shortcut row.
  *
  * The row is a hardcoded editorial list (`starterModels.ts`) — the freshest

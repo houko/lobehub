@@ -1,4 +1,4 @@
-import { BRANDING_NAME } from '@lobechat/business-const';
+import { BRANDING_NAME, CHANGELOG_ENABLED } from '@lobechat/business-const';
 import {
   getElectronIpc,
   type UpdaterState,
@@ -208,11 +208,14 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
       <Flexbox horizontal flex={mobile ? 1 : undefined} gap={8}>
         {/*
           CHANGELOG_URL is the hosted site's, so a rebranded or self-hosted
-          deployment was linking out to another product's release notes. The
-          `changelog` feature flag already existed for exactly this and simply
-          was not wired to anything.
+          deployment was linking out to another product's release notes.
+
+          Two gates, deliberately: the `changelog` feature flag already existed
+          for this and simply was not wired to anything, but it resolves from
+          server config at runtime — so it cannot express "this build has no
+          changelog", only "this deployment currently hides it".
         */}
-        {showChangelog && (
+        {CHANGELOG_ENABLED && showChangelog && (
           <a href={CHANGELOG_URL} rel="noreferrer" style={{ flex: 1 }} target="_blank">
             <Button block={mobile}>{t('changelog')}</Button>
           </a>
