@@ -19,10 +19,16 @@ export interface AskUserQuestionOption {
  * is 2-4 entries, `multiSelect` is opt-in.
  */
 export interface AskUserQuestionItem {
+  /** Whether the trailing free-form answer is valid for this question. */
+  allowCustom?: boolean;
   header: string;
+  /** Stable payload key. Falls back to `question` for legacy callers. */
+  id?: string;
   multiSelect?: boolean;
   options: AskUserQuestionOption[];
   question: string;
+  /** Optional questions do not block form submission when left unanswered. */
+  required?: boolean;
 }
 
 /**
@@ -31,6 +37,10 @@ export interface AskUserQuestionItem {
  * clarification surfaces so the model's prompts and the UI stay identical.
  */
 export interface AskUserQuestionArgs {
+  /** Whether multi-question forms expose the whole-form free-form escape. */
+  allowEscape?: boolean;
+  /** Absolute Unix-ms deadline supplied by bridge-backed interaction hosts. */
+  deadline?: number;
   questions: AskUserQuestionItem[];
 }
 
@@ -42,8 +52,8 @@ export interface AskUserQuestionArgs {
  * Three independent answer slices, kept apart so picks and custom text can
  * coexist on one question (multi-select) and a half-typed escape reply never
  * bleeds into the form payload:
- *   - `picks`   → multi-choice selections, keyed by question text
- *   - `custom`  → per-question "write your own" text, keyed by question text
+ *   - `picks`   → multi-choice selections, keyed by stable ID or legacy question text
+ *   - `custom`  → per-question text, keyed by stable ID or legacy question text
  *   - `escape*` → the global "Or type directly" box (whole-form bypass)
  *
  * Declared as a `type` (not `interface`) so it satisfies the

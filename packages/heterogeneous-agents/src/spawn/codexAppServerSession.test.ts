@@ -312,6 +312,18 @@ describe('CodexAppServerSession', () => {
     ]);
     expect(requests).toContainEqual({
       id: expect.any(Number),
+      method: 'initialize',
+      params: {
+        capabilities: { experimentalApi: true },
+        clientInfo: {
+          name: 'lobehub-desktop',
+          title: 'LobeHub Desktop',
+          version: '1.0.0',
+        },
+      },
+    });
+    expect(requests).toContainEqual({
+      id: expect.any(Number),
       method: 'thread/start',
       params: {
         approvalPolicy: 'never',
@@ -977,16 +989,24 @@ describe('CodexAppServerSession', () => {
     spawnMock.mockReturnValue(child);
     vi.spyOn(process, 'kill').mockImplementation(() => true);
     const statuses: any[] = [];
+    const invalidAnswers: Record<string, string> = {
+      invalidBoolean: 'yes',
+      invalidEnum: 'Other',
+      invalidInteger: 'not-a-number',
+      invalidLength: 'x',
+    };
     const onIntervention = vi.fn(async ({ arguments: { questions } }) => ({
       result:
-        questions[0].question === 'Choose scope'
-          ? { 'Choose scope': 'All' }
-          : {
-              'Choose deployment scope': 'All files',
-              'Enable cache': 'true',
-              'Name': 'Lobe',
-              'Pick labels': ['Source', 'Tests'],
-            },
+        questions[0].id === 'scope'
+          ? { scope: 'All', target: 'File' }
+          : invalidAnswers[questions[0].id]
+            ? { [questions[0].id]: invalidAnswers[questions[0].id] }
+            : {
+                cache: 'true',
+                name: 'Lobe',
+                scope: 'All files',
+                tags: ['Source', 'Tests'],
+              },
     }));
     const session = new CodexAppServerSession({
       args: [],
@@ -1026,6 +1046,14 @@ describe('CodexAppServerSession', () => {
             ],
             question: 'Choose scope',
           },
+          {
+            header: 'Target',
+            id: 'target',
+            isOther: false,
+            isSecret: false,
+            options: [{ description: 'Current file', label: 'File' }],
+            question: 'Choose scope',
+          },
         ],
         threadId: 'thread-1',
         turnId: 'turn-1',
@@ -1034,7 +1062,9 @@ describe('CodexAppServerSession', () => {
     await vi.waitFor(() =>
       expect(requests).toContainEqual({
         id: 'input-1',
-        result: { answers: { scope: { answers: ['All'] } } },
+        result: {
+          answers: { scope: { answers: ['All'] }, target: { answers: ['File'] } },
+        },
       }),
     );
     send({
@@ -1086,6 +1116,42 @@ describe('CodexAppServerSession', () => {
         },
       }),
     );
+    for (const [id, fieldSchema] of Object.entries({
+      invalidBoolean: { type: 'boolean' },
+      invalidEnum: { enum: ['First', 'Second'], type: 'string' },
+      invalidInteger: { type: 'integer' },
+      invalidLength: { minLength: 2, type: 'string' },
+    })) {
+      send({
+        id,
+        method: 'mcpServer/elicitation/request',
+        params: {
+          message: 'Invalid value test',
+          mode: 'form',
+          requestedSchema: {
+            properties: { [id]: fieldSchema },
+            required: [id],
+            type: 'object',
+          },
+          serverName: 'connector',
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+        },
+      });
+      await vi.waitFor(() =>
+        expect(requests).toContainEqual({
+          error: {
+            code: -32_000,
+            message: expect.stringContaining(
+              id === 'invalidLength'
+                ? 'Invalid MCP elicitation response'
+                : `Invalid MCP elicitation value for '${id}'`,
+            ),
+          },
+          id,
+        }),
+      );
+    }
     send({
       id: 'permissions-1',
       method: 'item/permissions/requestApproval',
@@ -1168,7 +1234,31 @@ describe('CodexAppServerSession', () => {
     });
     await run;
 
-    expect(onIntervention).toHaveBeenCalledTimes(2);
+    expect(onIntervention).toHaveBeenCalledTimes(6);
+    expect(onIntervention.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        arguments: expect.objectContaining({
+          deadline: expect.any(Number),
+          questions: expect.arrayContaining([
+            expect.objectContaining({ id: 'scope' }),
+            expect.objectContaining({ allowCustom: false, id: 'target' }),
+          ]),
+        }),
+        timeoutMs: expect.any(Number),
+      }),
+    );
+    expect(onIntervention.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        arguments: expect.objectContaining({
+          allowEscape: false,
+          deadline: expect.any(Number),
+          questions: expect.arrayContaining([
+            expect.objectContaining({ id: 'name', required: true }),
+            expect.objectContaining({ id: 'scope', required: false }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it('cancels a pending child-thread intervention when serverRequest/resolved clears it elsewhere', async () => {

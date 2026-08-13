@@ -70,8 +70,8 @@ interface QuestionPanelProps {
 }
 
 /**
- * A single question: its header/title, the numbered options, and a trailing
- * free-text box so the user can answer in their own words instead of picking.
+ * A single question: its header/title, numbered options, and, when allowed, a
+ * trailing free-text box so the user can answer in their own words.
  *
  * Presentational and i18n-free — the visible strings come in as props so the
  * panel stays app-decoupled and reusable across surfaces.
@@ -120,46 +120,48 @@ export const QuestionPanel = memo<QuestionPanelProps>(
               onToggle={() => onToggle(question, opt.label)}
             />
           ))}
-          {/* Last item: let the user write their own answer for this question.
-              Numbered as the next option so it reads as one more choice. */}
-          <Flexbox horizontal align="center" className={styles.customRow} gap={12}>
-            <span className={styles.index}>{question.options.length + 1}</span>
-            <TextArea
-              autoSize={{ maxRows: 4, minRows: 1 }}
-              disabled={disabled}
-              placeholder={customPlaceholder}
-              style={{ flex: 1 }}
-              value={customValue}
-              variant="filled"
-              onChange={(e) => onCustomChange(question, e.target.value)}
-              onKeyDown={(e) => {
-                // The IME guard keeps CJK composition confirms from acting.
-                if (e.nativeEvent.isComposing) return;
-                if (e.metaKey || e.ctrlKey || e.altKey) return;
-                const el = e.currentTarget;
-                if (e.key === 'ArrowUp' && onCustomNavigate) {
-                  if (el.selectionStart === 0 && el.selectionEnd === 0) {
-                    e.preventDefault();
-                    el.blur();
-                    onCustomNavigate('prev');
+          {question.allowCustom !== false && (
+            // Last item: let the user write their own answer for this question.
+            // Numbered as the next option so it reads as one more choice.
+            <Flexbox horizontal align="center" className={styles.customRow} gap={12}>
+              <span className={styles.index}>{question.options.length + 1}</span>
+              <TextArea
+                autoSize={{ maxRows: 4, minRows: 1 }}
+                disabled={disabled}
+                placeholder={customPlaceholder}
+                style={{ flex: 1 }}
+                value={customValue}
+                variant="filled"
+                onChange={(e) => onCustomChange(question, e.target.value)}
+                onKeyDown={(e) => {
+                  // The IME guard keeps CJK composition confirms from acting.
+                  if (e.nativeEvent.isComposing) return;
+                  if (e.metaKey || e.ctrlKey || e.altKey) return;
+                  const el = e.currentTarget;
+                  if (e.key === 'ArrowUp' && onCustomNavigate) {
+                    if (el.selectionStart === 0 && el.selectionEnd === 0) {
+                      e.preventDefault();
+                      el.blur();
+                      onCustomNavigate('prev');
+                    }
+                    return;
                   }
-                  return;
-                }
-                if (e.key === 'ArrowDown' && onCustomNavigate) {
-                  if (!el.value) {
-                    e.preventDefault();
-                    el.blur();
-                    onCustomNavigate('next');
+                  if (e.key === 'ArrowDown' && onCustomNavigate) {
+                    if (!el.value) {
+                      e.preventDefault();
+                      el.blur();
+                      onCustomNavigate('next');
+                    }
+                    return;
                   }
-                  return;
-                }
-                if (e.key !== 'Enter' || e.shiftKey) return;
-                if (!onPressEnter) return;
-                e.preventDefault();
-                onPressEnter();
-              }}
-            />
-          </Flexbox>
+                  if (e.key !== 'Enter' || e.shiftKey) return;
+                  if (!onPressEnter) return;
+                  e.preventDefault();
+                  onPressEnter();
+                }}
+              />
+            </Flexbox>
+          )}
         </Flexbox>
       </Flexbox>
     );

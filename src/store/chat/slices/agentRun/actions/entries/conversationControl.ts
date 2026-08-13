@@ -1207,7 +1207,7 @@ export class ConversationControlActionImpl {
         { intervention: { status: 'approved' } },
         optimisticContext,
       );
-      // Persist the structured `{ [questionText]: selectedLabel(s) }` answers
+      // Persist structured answers keyed by stable question ID (or legacy text)
       // to `pluginState.askUserAnswers` so the Render component can show
       // Q&A pairs instead of parsing the bridge's prose `User answers:`
       // dump out of `content`. Best-effort — never block the IPC submit.
@@ -1314,7 +1314,7 @@ export class ConversationControlActionImpl {
   };
 
   /**
-   * Persist the structured intervention answers (`{ questionText:
+   * Persist the structured intervention answers (`{ questionKey:
    * selectedLabel | selectedLabel[] }`) to the tool message's
    * `pluginState.askUserAnswers`. Drives structured Q&A rendering on the
    * `Render` component without re-parsing the bridge's prose tool_result.

@@ -1,17 +1,21 @@
 import type { BuiltinInterventionProps } from '@lobechat/types';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { buildSubmitPayload, FREEFORM_PAYLOAD_KEY, isQuestionAnswered, readDraft } from './draft';
+import {
+  buildSubmitPayload,
+  FREEFORM_PAYLOAD_KEY,
+  getQuestionKey,
+  isQuestionAnswered,
+  readDraft,
+} from './draft';
 import { normalizeAskUserQuestions } from './normalize';
 import type { AskUserDraft, AskUserQuestionArgs, AskUserQuestionItem } from './types';
 
 export interface UseAskUserFormParams {
   args: AskUserQuestionArgs | undefined;
   /**
-   * When set, drives an on-screen countdown + a timeout fallback that submits
-   * option 1 of every unanswered question when the clock hits zero. When
-   * `undefined` the countdown + fallback are disabled entirely (`expired` stays
-   * `false`, no timer runs) — used by surfaces with no bridge timeout.
+   * Relative fallback for hosts without `args.deadline`. Either deadline form
+   * drives the countdown and timeout fallback; when both are absent no timer runs.
    */
   countdownMs?: number;
   onInteractionAction?: BuiltinInterventionProps<AskUserQuestionArgs>['onInteractionAction'];
@@ -71,6 +75,7 @@ export const useAskUserForm = ({
   writeDraft,
 }: UseAskUserFormParams): AskUserFormApi => {
   const questions = useMemo(() => normalizeAskUserQuestions(args), [args]);
+  const suppliedDeadline = args?.deadline;
 
   // Plain const (not a hook) so it can read `persistedDraft` without tripping
   // exhaustive-deps; consumed only by the once-run useState initializers below.
@@ -87,12 +92,14 @@ export const useAskUserForm = ({
     return String(idx >= 0 ? idx : 0);
   });
 
-  // Countdown is opt-in: only surfaces with a bridge timeout pass `countdownMs`.
-  const countdownEnabled = countdownMs != null;
+  // Countdown is opt-in: bridge-backed surfaces supply an absolute deadline,
+  // while legacy hosts may still provide a mount-relative duration.
+  const countdownEnabled = suppliedDeadline != null || countdownMs != null;
 
-  // Mounted-time deadline; server has its own clock and will return isError if
-  // it expires first. Drift of a few seconds is fine.
-  const deadline = useMemo(() => Date.now() + (countdownMs ?? 0), [countdownMs]);
+  const deadline = useMemo(
+    () => suppliedDeadline ?? Date.now() + (countdownMs ?? 0),
+    [countdownMs, suppliedDeadline],
+  );
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!countdownEnabled) return;
@@ -122,24 +129,23 @@ export const useAskUserForm = ({
 
   const handleToggle = useCallback(
     (q: AskUserQuestionItem, label: string, options?: { submitOnComplete?: boolean }) => {
+      const key = getQuestionKey(q);
       let nextPicks: Record<string, string | string[]>;
       if (q.multiSelect) {
-        const current = (picks[q.question] as string[] | undefined) ?? [];
+        const current = (picks[key] as string[] | undefined) ?? [];
         nextPicks = {
           ...picks,
-          [q.question]: current.includes(label)
-            ? current.filter((x) => x !== label)
-            : [...current, label],
+          [key]: current.includes(label) ? current.filter((x) => x !== label) : [...current, label],
         };
       } else {
-        nextPicks = { ...picks, [q.question]: label };
+        nextPicks = { ...picks, [key]: label };
       }
 
       // Single-select pick and custom text are mutually exclusive — picking
       // drops any "write your own" text. Multi-select keeps it (additive).
       let nextCustom = custom;
-      if (!q.multiSelect && custom[q.question]) {
-        const { [q.question]: _drop, ...rest } = custom;
+      if (!q.multiSelect && custom[key]) {
+        const { [key]: _drop, ...rest } = custom;
         nextCustom = rest;
       }
 
@@ -166,7 +172,7 @@ export const useAskUserForm = ({
         // sweeps through without re-clicking the tabs.
         if (questions.length > 1) {
           const next = questions.findIndex(
-            (qq) => qq.question !== q.question && !isQuestionAnswered(qq, nextPicks, nextCustom),
+            (qq) => getQuestionKey(qq) !== key && !isQuestionAnswered(qq, nextPicks, nextCustom),
           );
           if (next >= 0) setActiveTab(String(next));
         }
@@ -177,14 +183,15 @@ export const useAskUserForm = ({
 
   const handleCustomChange = useCallback(
     (q: AskUserQuestionItem, value: string) => {
-      const nextCustom = { ...custom, [q.question]: value };
+      const key = getQuestionKey(q);
+      const nextCustom = { ...custom, [key]: value };
 
       // Single-select: writing your own answer clears the picked option so the
       // two stay mutually exclusive. Multi-select keeps the checks — custom
       // text rides along as an additive entry.
       let nextPicks = picks;
-      if (!q.multiSelect && value.trim() && picks[q.question]) {
-        const { [q.question]: _drop, ...rest } = picks;
+      if (!q.multiSelect && value.trim() && picks[key]) {
+        const { [key]: _drop, ...rest } = picks;
         nextPicks = rest;
       }
 
@@ -216,7 +223,7 @@ export const useAskUserForm = ({
   // Whole-form freeform only makes sense with more than one question — with a
   // single question the per-question custom box already IS the full custom
   // answer, so escape is redundant there and never offered.
-  const escapeAvailable = questions.length > 1;
+  const escapeAvailable = questions.length > 1 && args?.allowEscape !== false;
   const inEscape = escapeActive && escapeAvailable;
 
   const handleSubmit = useCallback(() => {
@@ -240,8 +247,8 @@ export const useAskUserForm = ({
     }
   }, [onInteractionAction, submitting]);
 
-  const allAnswered = useMemo(
-    () => questions.every((q) => isQuestionAnswered(q, picks, custom)),
+  const allRequiredAnswered = useMemo(
+    () => questions.every((q) => q.required === false || isQuestionAnswered(q, picks, custom)),
     [picks, custom, questions],
   );
 
@@ -262,9 +269,10 @@ export const useAskUserForm = ({
     // any question still untouched.
     const fallback = buildSubmitPayload(questions, picks, custom);
     for (const q of questions) {
-      if (fallback[q.question] == null && q.options.length > 0) {
+      const key = getQuestionKey(q);
+      if (q.required !== false && fallback[key] == null && q.options.length > 0) {
         const first = q.options[0].label;
-        fallback[q.question] = q.multiSelect ? [first] : first;
+        fallback[key] = q.multiSelect ? [first] : first;
       }
     }
     void submitWith(fallback);
@@ -285,7 +293,7 @@ export const useAskUserForm = ({
     questions.length === 0 ||
     (inEscape
       ? !escapeText.trim() || submitting || expired
-      : !allAnswered || expired || submitting);
+      : !allRequiredAnswered || expired || submitting);
 
   return {
     activeQuestion,

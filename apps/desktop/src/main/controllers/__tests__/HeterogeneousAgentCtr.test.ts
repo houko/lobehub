@@ -1333,16 +1333,21 @@ describe('HeterogeneousAgentCtr', () => {
     });
 
     it('routes Codex app-server user input through the existing intervention UI', async () => {
+      const deadline = Date.now() + 60_000;
+      const interventionArguments = {
+        deadline,
+        questions: [
+          {
+            header: 'Scope',
+            id: 'scope',
+            options: [{ description: 'Everything', label: 'All' }],
+            question: 'Choose scope',
+          },
+        ],
+      };
       codexAppServerInterventionMock.mockReturnValue({
-        arguments: {
-          questions: [
-            {
-              header: 'Scope',
-              options: [{ description: 'Everything', label: 'All' }],
-              question: 'Choose scope',
-            },
-          ],
-        },
+        arguments: interventionArguments,
+        timeoutMs: 60_000,
         toolCallId: 'codex-question-1',
       });
       const send = vi.fn();
@@ -1375,6 +1380,7 @@ describe('HeterogeneousAgentCtr', () => {
             event: expect.objectContaining({
               data: expect.objectContaining({
                 apiName: 'askUserQuestion',
+                arguments: JSON.stringify(interventionArguments),
                 identifier: 'codex',
                 toolCallId: 'codex-question-1',
               }),
@@ -1386,13 +1392,13 @@ describe('HeterogeneousAgentCtr', () => {
       );
       await ctr.submitIntervention({
         operationId: 'op-codex-intervention',
-        result: { 'Choose scope': 'All' },
+        result: { scope: 'All' },
         toolCallId: 'codex-question-1',
       });
       await sendPrompt;
 
       expect(codexAppServerInterventionResultMock).toHaveBeenCalledWith({
-        result: { 'Choose scope': 'All' },
+        result: { scope: 'All' },
       });
     });
 

@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AskUserQuestionArgs } from './types';
 import { useAskUserForm } from './useAskUserForm';
@@ -45,6 +45,10 @@ const setup = (args: AskUserQuestionArgs, persistedDraft?: unknown) => {
   return { hook, onInteractionAction };
 };
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('useAskUserForm select-to-submit', () => {
   it('submits immediately when a keyboard single-select pick completes the form', () => {
     const { hook, onInteractionAction } = setup(singleQuestionArgs);
@@ -59,6 +63,97 @@ describe('useAskUserForm select-to-submit', () => {
       payload: { 'How broad?': 'Full' },
       type: 'submit',
     });
+  });
+
+  it('allows optional fields to stay empty', () => {
+    const args: AskUserQuestionArgs = {
+      questions: [
+        {
+          header: 'Workspace',
+          id: 'workspaceScope',
+          options: [{ label: 'All' }],
+          question: 'Choose scope',
+        },
+        {
+          header: 'Tests',
+          id: 'testScope',
+          options: [{ label: 'Changed' }],
+          question: 'Choose scope',
+          required: false,
+        },
+      ],
+    };
+    const { hook, onInteractionAction } = setup(args);
+
+    act(() => {
+      hook.result.current.handleToggle(args.questions[0], 'All');
+    });
+
+    expect(hook.result.current.isSubmitDisabled).toBe(false);
+
+    act(() => {
+      hook.result.current.handleSubmit();
+    });
+
+    expect(onInteractionAction).toHaveBeenCalledExactlyOnceWith({
+      payload: { workspaceScope: 'All' },
+      type: 'submit',
+    });
+  });
+
+  it('keys duplicate question text by stable IDs', () => {
+    const args: AskUserQuestionArgs = {
+      questions: [
+        {
+          header: 'Workspace',
+          id: 'workspaceScope',
+          options: [{ label: 'All' }],
+          question: 'Choose scope',
+        },
+        {
+          header: 'Tests',
+          id: 'testScope',
+          options: [{ label: 'Changed' }],
+          question: 'Choose scope',
+        },
+      ],
+    };
+    const { hook, onInteractionAction } = setup(args);
+
+    act(() => {
+      hook.result.current.handleToggle(args.questions[0], 'All');
+    });
+    act(() => {
+      hook.result.current.handleToggle(args.questions[1], 'Changed');
+    });
+    act(() => {
+      hook.result.current.handleSubmit();
+    });
+
+    expect(onInteractionAction).toHaveBeenCalledExactlyOnceWith({
+      payload: { testScope: 'Changed', workspaceScope: 'All' },
+      type: 'submit',
+    });
+  });
+
+  it('uses an absolute producer deadline instead of restarting the countdown on mount', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const { result } = renderHook(() =>
+      useAskUserForm({
+        args: { ...singleQuestionArgs, deadline: 40_000 },
+        persistedDraft: undefined,
+        writeDraft: vi.fn(),
+      }),
+    );
+
+    expect(result.current.remainingMs).toBe(30_000);
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(result.current.remainingMs).toBe(29_000);
   });
 
   it('never submits on a plain (mouse-click) toggle, even when it completes the form', () => {

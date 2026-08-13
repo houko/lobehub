@@ -49,6 +49,8 @@
   "askUserQuestion.recommendedTag": "推荐",
   "askUserQuestion.skip": "跳过",
   "askUserQuestion.submit": "提交",
+  "askUserQuestion.timeExpired": "已超时。",
+  "askUserQuestion.timeRemaining": "剩余时间：{{time}}",
   "claudeCode.askUserQuestion.customOption.placeholder": "或自己输入…",
   "claudeCode.askUserQuestion.escape.back": "返回选项",
   "claudeCode.askUserQuestion.escape.enter": "或直接输入",

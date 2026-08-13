@@ -4,6 +4,7 @@ import { Flexbox, Text } from '@lobehub/ui';
 import { createStaticStyles } from 'antd-style';
 import { memo } from 'react';
 
+import { getQuestionKey } from './draft';
 import type { AskUserQuestionItem } from './types';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
@@ -171,7 +172,7 @@ export const AskUserQuestionResult = memo<AskUserQuestionResultProps>(
               align="flex-start"
               gap={8}
               horizontal={multiple}
-              key={`${question.question}-${index}`}
+              key={`${getQuestionKey(question)}-${index}`}
             >
               {multiple && <span className={styles.ordinal}>{`Q${index + 1}`}</span>}
               <div
@@ -195,9 +196,9 @@ export const AskUserQuestionResult = memo<AskUserQuestionResultProps>(
       <Flexbox className={styles.container} gap={16}>
         {questions.map((question, index) => (
           <QuestionAnswer
-            answer={answers?.[question.question]}
+            answer={answers?.[getQuestionKey(question)]}
             index={multiple ? index + 1 : undefined}
-            key={`${question.question}-${index}`}
+            key={`${getQuestionKey(question)}-${index}`}
             notAnswered={labels.notAnswered}
             question={question}
             recommendedTag={labels.recommendedTag}

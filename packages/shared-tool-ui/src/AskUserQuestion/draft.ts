@@ -30,14 +30,19 @@ export const readDraft = (raw: unknown): AskUserDraft => {
   };
 };
 
+/** Stable form/payload key, with legacy question-text compatibility. */
+export const getQuestionKey = (question: AskUserQuestionItem): string =>
+  question.id ?? question.question;
+
 /** A question counts as answered when it has a pick or non-empty custom text. */
 export const isQuestionAnswered = (
   q: AskUserQuestionItem,
   picks: Record<string, string | string[]>,
   custom: Record<string, string>,
 ): boolean => {
-  if (custom[q.question]?.trim()) return true;
-  const a = picks[q.question];
+  const key = getQuestionKey(q);
+  if (custom[key]?.trim()) return true;
+  const a = picks[key];
   return q.multiSelect ? Array.isArray(a) && a.length > 0 : !!a;
 };
 
@@ -54,15 +59,16 @@ export const buildSubmitPayload = (
 ): Record<string, string | string[]> => {
   const payload: Record<string, string | string[]> = {};
   for (const q of questions) {
-    const text = custom[q.question]?.trim();
+    const key = getQuestionKey(q);
+    const text = custom[key]?.trim();
     if (q.multiSelect) {
-      const chosen = Array.isArray(picks[q.question]) ? (picks[q.question] as string[]) : [];
+      const chosen = Array.isArray(picks[key]) ? (picks[key] as string[]) : [];
       const merged = text ? [...chosen, text] : chosen;
-      if (merged.length > 0) payload[q.question] = merged;
+      if (merged.length > 0) payload[key] = merged;
     } else if (text) {
-      payload[q.question] = text;
-    } else if (picks[q.question]) {
-      payload[q.question] = picks[q.question];
+      payload[key] = text;
+    } else if (picks[key]) {
+      payload[key] = picks[key];
     }
   }
   return payload;

@@ -62,14 +62,20 @@ const normalizeQuestion = (value: unknown): AskUserQuestionItem | undefined => {
   const options = Array.isArray(rawOptions)
     ? rawOptions.map(normalizeOption).filter(isQuestionOption)
     : [];
+  const allowCustom = typeof item?.allowCustom === 'boolean' ? item.allowCustom : undefined;
   const header = pickString(item?.header) ?? '';
+  const id = pickString(item?.id);
   const multiSelect = typeof item?.multiSelect === 'boolean' ? item.multiSelect : undefined;
+  const required = typeof item?.required === 'boolean' ? item.required : undefined;
 
   return {
+    ...(allowCustom === undefined ? {} : { allowCustom }),
     header,
+    ...(id ? { id } : {}),
     ...(multiSelect === undefined ? {} : { multiSelect }),
     options,
     question,
+    ...(required === undefined ? {} : { required }),
   };
 };
 

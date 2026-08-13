@@ -51,6 +51,8 @@ export default {
   'askUserQuestion.recommendedTag': 'Recommended',
   'askUserQuestion.skip': 'Skip',
   'askUserQuestion.submit': 'Submit',
+  'askUserQuestion.timeExpired': 'Time expired.',
+  'askUserQuestion.timeRemaining': 'Time remaining: {{time}}',
   'claudeCode.askUserQuestion.customOption.placeholder': 'Or write your own…',
   'claudeCode.askUserQuestion.escape.back': 'Back to options',
   'claudeCode.askUserQuestion.escape.enter': 'Or type directly',

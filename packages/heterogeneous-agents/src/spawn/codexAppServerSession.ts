@@ -4,7 +4,11 @@ import path from 'node:path';
 
 import type { AgentStreamEvent } from '@lobechat/agent-gateway-client';
 import { isRecord } from '@lobechat/utils/object';
+import type { PrimitiveSchemaDefinition } from '@modelcontextprotocol/sdk/types.js';
+import { ElicitRequestFormParamsSchema } from '@modelcontextprotocol/sdk/types.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 
+import { DEFAULT_ASK_USER_TIMEOUT_MS } from '../askUser/constants';
 import type { UsageData } from '../types';
 import { AgentStreamPipeline } from './agentStreamPipeline';
 import type { HeterogeneousAgentRuntimeStatus } from './claudeAgentSdkSession';
@@ -82,14 +86,21 @@ type CodexAppServerApprovalPolicy = 'never' | 'on-request' | 'untrusted';
 type CodexAppServerSandboxMode = 'danger-full-access' | 'read-only' | 'workspace-write';
 
 export interface CodexAppServerInterventionQuestion {
+  allowCustom?: boolean;
   header: string;
+  id?: string;
   multiSelect?: boolean;
   options: Array<{ description: string; label: string }>;
   question: string;
+  required?: boolean;
 }
 
 export interface CodexAppServerInterventionRequest {
-  arguments: { questions: CodexAppServerInterventionQuestion[] };
+  arguments: {
+    allowEscape?: boolean;
+    deadline?: number;
+    questions: CodexAppServerInterventionQuestion[];
+  };
   timeoutMs?: number;
   toolCallId: string;
 }
@@ -424,8 +435,8 @@ const toStringArray = (value: unknown): string[] => {
 const readInterventionResult = (result: unknown): Record<string, unknown> =>
   isRecord(result) ? result : {};
 
-const getQuestionAnswer = (result: Record<string, unknown>, question: string): string[] => {
-  const value = result[question];
+const getQuestionAnswer = (result: Record<string, unknown>, key: string): string[] => {
+  const value = result[key];
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
   return typeof value === 'string' && value ? [value] : [];
 };
@@ -433,64 +444,107 @@ const getQuestionAnswer = (result: Record<string, unknown>, question: string): s
 interface SchemaOption {
   description: string;
   label: string;
-  value: unknown;
+  value: string;
 }
 
-const getSchemaOptions = (schema: Record<string, unknown>) => {
-  const optionSchema = schema.type === 'array' && isRecord(schema.items) ? schema.items : schema;
-  if (Array.isArray(optionSchema.enum)) {
-    const names = Array.isArray(optionSchema.enumNames) ? optionSchema.enumNames : [];
-    return optionSchema.enum.map<SchemaOption>((value, index) => ({
+const getSchemaOptions = (schema: PrimitiveSchemaDefinition): SchemaOption[] => {
+  if (schema.type === 'array') {
+    if ('enum' in schema.items) {
+      return schema.items.enum.map((value) => ({ description: '', label: value, value }));
+    }
+
+    return schema.items.anyOf.map(({ const: value, title: label }) => ({
       description: '',
-      label: typeof names[index] === 'string' ? names[index] : String(value),
+      label,
       value,
     }));
   }
 
-  const titledOptions = Array.isArray(optionSchema.oneOf)
-    ? optionSchema.oneOf
-    : Array.isArray(optionSchema.anyOf)
-      ? optionSchema.anyOf
-      : undefined;
-  if (titledOptions) {
-    return titledOptions.flatMap<SchemaOption>((option) => {
-      if (!isRecord(option) || option.const === undefined) return [];
-      return [
-        {
-          description: typeof option.description === 'string' ? option.description : '',
-          label: typeof option.title === 'string' ? option.title : String(option.const),
-          value: option.const,
-        },
-      ];
-    });
+  if (schema.type === 'string' && 'enum' in schema) {
+    const names = 'enumNames' in schema ? schema.enumNames : undefined;
+    return schema.enum.map((value, index) => ({
+      description: '',
+      label: names?.[index] ?? value,
+      value,
+    }));
+  }
+
+  if (schema.type === 'string' && 'oneOf' in schema) {
+    return schema.oneOf.map(({ const: value, title: label }) => ({
+      description: '',
+      label,
+      value,
+    }));
   }
 
   if (schema.type === 'boolean') {
     return [
-      { description: '', label: 'true', value: true },
-      { description: '', label: 'false', value: false },
+      { description: '', label: 'true', value: 'true' },
+      { description: '', label: 'false', value: 'false' },
     ];
   }
 
   return [];
 };
 
+type SchemaCoercionResult = { error: string; success: false } | { success: true; value: unknown };
+
 const coerceSchemaAnswer = (
   answer: string[],
-  schema: Record<string, unknown>,
+  schema: PrimitiveSchemaDefinition,
   options: SchemaOption[],
-): unknown => {
+): SchemaCoercionResult => {
   const valuesByLabel = new Map(options.map(({ label, value }) => [label, value]));
-  const coerceValue = (value: string) => {
-    if (valuesByLabel.has(value)) return valuesByLabel.get(value);
-    if (schema.type === 'boolean') return value === 'true';
-    if (schema.type === 'integer') return Number.parseInt(value, 10);
-    if (schema.type === 'number') return Number(value);
-    return value;
+  const optionValues = new Set(options.map(({ value }) => value));
+  const resolveOption = (value: string): SchemaCoercionResult => {
+    const resolved = valuesByLabel.get(value) ?? (optionValues.has(value) ? value : undefined);
+    return resolved === undefined
+      ? { error: `must be one of: ${options.map(({ label }) => label).join(', ')}`, success: false }
+      : { success: true, value: resolved };
   };
 
-  return schema.type === 'array' ? answer.map(coerceValue) : coerceValue(answer[0]);
+  if (schema.type === 'array') {
+    const values: string[] = [];
+    for (const value of answer) {
+      const resolved = resolveOption(value);
+      if (!resolved.success) return resolved;
+      values.push(String(resolved.value));
+    }
+    return { success: true, value: values };
+  }
+
+  const rawValue = answer[0];
+  if (options.length > 0) {
+    const resolved = resolveOption(rawValue);
+    if (!resolved.success) return resolved;
+    if (schema.type === 'boolean') {
+      return { success: true, value: resolved.value === 'true' };
+    }
+    return resolved;
+  }
+
+  if (schema.type === 'boolean') {
+    return rawValue === 'true' || rawValue === 'false'
+      ? { success: true, value: rawValue === 'true' }
+      : { error: 'must be true or false', success: false };
+  }
+
+  if (schema.type === 'integer' || schema.type === 'number') {
+    const value = Number(rawValue.trim());
+    if (
+      !rawValue.trim() ||
+      !Number.isFinite(value) ||
+      (schema.type === 'integer' && !Number.isInteger(value))
+    ) {
+      return { error: `must be a valid ${schema.type}`, success: false };
+    }
+    return { success: true, value };
+  }
+
+  return { success: true, value: rawValue };
 };
+
+const elicitationSchemaValidator = new AjvJsonSchemaValidator();
 
 export class CodexAppServerSession {
   private readonly pipeline: AgentStreamPipeline;
@@ -542,7 +596,7 @@ export class CodexAppServerSession {
     try {
       await this.startProcess();
       await this.request('initialize', {
-        capabilities: { experimentalApi: false },
+        capabilities: { experimentalApi: true },
         clientInfo: {
           name: 'lobehub-desktop',
           title: 'LobeHub Desktop',
@@ -1069,7 +1123,9 @@ export class CodexAppServerSession {
           id: value.id,
           isSecret: value.isSecret === true,
           question: {
+            allowCustom: value.isOther !== false,
             header: typeof value.header === 'string' ? value.header : '',
+            id: value.id,
             options: Array.isArray(value.options)
               ? value.options.flatMap((option) =>
                   isRecord(option) && typeof option.label === 'string'
@@ -1117,9 +1173,10 @@ export class CodexAppServerSession {
     const timeoutMs =
       typeof message.params?.autoResolutionMs === 'number' && message.params.autoResolutionMs > 0
         ? message.params.autoResolutionMs
-        : undefined;
+        : DEFAULT_ASK_USER_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     const outcome = await this.requestIntervention(message.id, {
-      arguments: { questions: questionEntries.map(({ question }) => question) },
+      arguments: { deadline, questions: questionEntries.map(({ question }) => question) },
       timeoutMs,
       toolCallId: itemId,
     });
@@ -1133,8 +1190,8 @@ export class CodexAppServerSession {
     const result = readInterventionResult(outcome.answer.result);
     const freeform = toStringArray(result.__freeform__);
     const answers = Object.fromEntries(
-      questionEntries.flatMap(({ id, question }, index) => {
-        const values = getQuestionAnswer(result, question.question);
+      questionEntries.flatMap(({ id }, index) => {
+        const values = getQuestionAnswer(result, id);
         const resolved = values.length > 0 ? values : index === 0 ? freeform : [];
         return resolved.length > 0 ? [[id, { answers: resolved }]] : [];
       }),
@@ -1157,11 +1214,10 @@ export class CodexAppServerSession {
       return;
     }
 
-    const schema = isRecord(message.params?.requestedSchema)
-      ? message.params.requestedSchema
-      : undefined;
-    const properties = schema && isRecord(schema.properties) ? schema.properties : undefined;
-    if (!properties || Object.keys(properties).length === 0) {
+    const parsedSchema = ElicitRequestFormParamsSchema.shape.requestedSchema.safeParse(
+      message.params?.requestedSchema,
+    );
+    if (!parsedSchema.success || Object.keys(parsedSchema.data.properties).length === 0) {
       this.writeRpc({
         id: message.id,
         result: { _meta: null, action: 'cancel', content: null },
@@ -1173,32 +1229,48 @@ export class CodexAppServerSession {
       return;
     }
 
-    const fields = Object.entries(properties).flatMap(([name, value]) => {
-      if (!isRecord(value)) return [];
-      const schemaOptions = getSchemaOptions(value);
+    const schema = parsedSchema.data;
+    const properties = schema.properties;
+    const requiredFields = new Set(schema.required ?? []);
+    const fields: Array<{
+      name: string;
+      question: CodexAppServerInterventionQuestion;
+      schema: PrimitiveSchemaDefinition;
+      schemaOptions: SchemaOption[];
+    }> = [];
+    for (const [name, fieldSchema] of Object.entries(properties)) {
+      const schemaOptions = getSchemaOptions(fieldSchema);
       const question =
-        typeof value.description === 'string'
-          ? value.description
-          : typeof value.title === 'string'
-            ? value.title
+        typeof fieldSchema.description === 'string'
+          ? fieldSchema.description
+          : typeof fieldSchema.title === 'string'
+            ? fieldSchema.title
             : name;
-      return [
-        {
-          name,
-          question: {
-            header: typeof value.title === 'string' ? value.title : name,
-            multiSelect: value.type === 'array',
-            options: schemaOptions.map(({ description, label }) => ({ description, label })),
-            question,
-          } satisfies CodexAppServerInterventionQuestion,
-          schemaOptions,
-          schema: value,
-        },
-      ];
-    });
+      fields.push({
+        name,
+        question: {
+          allowCustom: schemaOptions.length === 0,
+          header: typeof fieldSchema.title === 'string' ? fieldSchema.title : name,
+          id: name,
+          multiSelect: fieldSchema.type === 'array',
+          options: schemaOptions.map(({ description, label }) => ({ description, label })),
+          question,
+          required: requiredFields.has(name),
+        } satisfies CodexAppServerInterventionQuestion,
+        schema: fieldSchema,
+        schemaOptions,
+      });
+    }
     const itemId = `mcp-elicitation-${String(message.id)}`;
+    const timeoutMs = DEFAULT_ASK_USER_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     const outcome = await this.requestIntervention(message.id, {
-      arguments: { questions: fields.map(({ question }) => question) },
+      arguments: {
+        allowEscape: false,
+        deadline,
+        questions: fields.map(({ question }) => question),
+      },
+      timeoutMs,
       toolCallId: itemId,
     });
     if (!outcome.active) return;
@@ -1212,14 +1284,36 @@ export class CodexAppServerSession {
     }
 
     const result = readInterventionResult(outcome.answer.result);
-    const content = Object.fromEntries(
-      fields.flatMap(({ name, question, schema: fieldSchema, schemaOptions }) => {
-        const answer = getQuestionAnswer(result, question.question);
-        return answer.length > 0
-          ? [[name, coerceSchemaAnswer(answer, fieldSchema, schemaOptions)]]
-          : [];
-      }),
-    );
+    const content: Record<string, unknown> = {};
+    for (const { name, schema: fieldSchema, schemaOptions } of fields) {
+      const answer = getQuestionAnswer(result, name);
+      if (answer.length === 0) {
+        if (requiredFields.has(name)) {
+          const errorMessage = `MCP elicitation required field '${name}' was not answered.`;
+          this.writeUnsupportedRequest(message.id, errorMessage);
+          await this.reportDiagnostic(`invalid-mcp-elicitation-answer:${name}`, errorMessage);
+          return;
+        }
+        continue;
+      }
+
+      const coerced = coerceSchemaAnswer(answer, fieldSchema, schemaOptions);
+      if (!coerced.success) {
+        const errorMessage = `Invalid MCP elicitation value for '${name}': ${coerced.error}`;
+        this.writeUnsupportedRequest(message.id, errorMessage);
+        await this.reportDiagnostic(`invalid-mcp-elicitation-answer:${name}`, errorMessage);
+        return;
+      }
+      content[name] = coerced.value;
+    }
+
+    const validationResult = elicitationSchemaValidator.getValidator(schema)(content);
+    if (!validationResult.valid) {
+      const errorMessage = `Invalid MCP elicitation response: ${validationResult.errorMessage}`;
+      this.writeUnsupportedRequest(message.id, errorMessage);
+      await this.reportDiagnostic('invalid-mcp-elicitation-response', errorMessage);
+      return;
+    }
     this.writeRpc({
       id: message.id,
       result: { _meta: null, action: 'accept', content },
@@ -1243,8 +1337,12 @@ export class CodexAppServerSession {
       type: 'item.started',
     });
 
+    const timeoutMs = request.arguments.deadline
+      ? Math.max(1, request.arguments.deadline - Date.now())
+      : request.timeoutMs;
+    const interventionRequest = { ...request, timeoutMs };
     const answer = this.options.onIntervention
-      ? await this.options.onIntervention(request, controller.signal)
+      ? await this.options.onIntervention(interventionRequest, controller.signal)
       : { cancelled: true };
     const active = this.pendingServerRequests.get(key) === controller;
     if (!active) return { active: false, answer };

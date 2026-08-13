@@ -21,10 +21,9 @@ import { useChatStore } from '@/store/chat';
  * Claude Code surface uses, wired to the shared `useAskUserForm` +
  * `AskUserQuestionView` (`@lobechat/shared-tool-ui/ask-user`).
  *
- * Unlike Claude Code there is no bridge timeout here, so `countdownMs` is
- * omitted (no countdown, no timeout fallback). This wrapper owns the two
- * app-coupled bits: draft persistence (via the conversation + chat stores) and
- * i18n (generic `askUserQuestion.*` keys).
+ * This wrapper owns the app-coupled draft persistence and i18n. Most builtin
+ * callers have no timeout; bridge-backed callers can include an absolute
+ * deadline in the arguments so the shared form displays the producer's clock.
  *
  * When the card is shown read-only (`interactionMode !== 'custom'`, e.g. a
  * resolved / historical message), it renders a compact summary of the questions
@@ -80,8 +79,8 @@ const AskUserQuestionIntervention = memo<BuiltinInterventionProps<AskUserQuestio
     recommendedTag: t('askUserQuestion.recommendedTag'),
     skip: t('askUserQuestion.skip'),
     submit: t('askUserQuestion.submit'),
-    timeExpired: '',
-    timeRemaining: () => '',
+    timeExpired: t('askUserQuestion.timeExpired'),
+    timeRemaining: (time: string) => t('askUserQuestion.timeRemaining', { time }),
   };
 
   return (
@@ -89,7 +88,7 @@ const AskUserQuestionIntervention = memo<BuiltinInterventionProps<AskUserQuestio
       {...form}
       actionsPortalTarget={actionsPortalTarget}
       labels={labels}
-      showCountdown={false}
+      showCountdown={args?.deadline !== undefined}
     />
   );
 });

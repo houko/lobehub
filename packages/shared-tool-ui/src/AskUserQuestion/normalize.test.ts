@@ -7,26 +7,32 @@ describe('normalizeAskUserQuestions', () => {
     const questions = normalizeAskUserQuestions({
       questions: [
         {
+          allowCustom: false,
           header: 'Scope',
+          id: 'scope',
           multiSelect: true,
           options: [
             { description: 'Fix the crash only', label: 'Narrow' },
             { description: 'Also harden related renderers', label: 'Full' },
           ],
           question: 'How broad should the fix be?',
+          required: false,
         },
       ],
     });
 
     expect(questions).toEqual([
       {
+        allowCustom: false,
         header: 'Scope',
+        id: 'scope',
         multiSelect: true,
         options: [
           { description: 'Fix the crash only', label: 'Narrow' },
           { description: 'Also harden related renderers', label: 'Full' },
         ],
         question: 'How broad should the fix be?',
+        required: false,
       },
     ]);
   });

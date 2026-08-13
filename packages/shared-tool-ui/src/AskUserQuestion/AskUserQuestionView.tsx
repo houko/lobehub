@@ -7,7 +7,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { registerPendingHotkeyCard } from '../pendingHotkeys';
-import { formatRemaining, isQuestionAnswered } from './draft';
+import { formatRemaining, getQuestionKey, isQuestionAnswered } from './draft';
 import QuestionPanel from './QuestionPanel';
 import type { AskUserQuestionItem } from './types';
 import type { AskUserFormApi } from './useAskUserForm';
@@ -90,18 +90,20 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const portalRef = useRef(actionsPortalTarget);
 
-  // Keyboard cursor over the active question's rows, keyed by question text so
-  // each question keeps its own cursor across tab switches with no reset
+  // Keyboard cursor over the active question's rows, keyed by stable ID (or
+  // legacy question text) so each question keeps its own cursor across tab
+  // switches with no reset
   // effect. `options.length` is a sentinel for the trailing free-text row.
   // Unset falls back to the picked option (single-select revisit) or row 1 —
   // so Enter alone accepts the first/recommended option, Codex-style.
   const [highlightMap, setHighlightMap] = useState<Record<string, number>>({});
   const highlightedIndex = useMemo(() => {
     if (!activeQuestion) return undefined;
-    const stored = highlightMap[activeQuestion.question];
+    const key = getQuestionKey(activeQuestion);
+    const stored = highlightMap[key];
     if (stored != null) return stored;
     if (!activeQuestion.multiSelect) {
-      const picked = picks[activeQuestion.question];
+      const picked = picks[key];
       const idx = activeQuestion.options.findIndex((o) => o.label === picked);
       if (idx >= 0) return idx;
     }
@@ -109,7 +111,7 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
   }, [activeQuestion, highlightMap, picks]);
 
   const setHighlight = useCallback((q: AskUserQuestionItem, idx: number) => {
-    setHighlightMap((m) => ({ ...m, [q.question]: idx }));
+    setHighlightMap((m) => ({ ...m, [getQuestionKey(q)]: idx }));
   }, []);
 
   // The active panel renders exactly one textarea (the per-question free-text
@@ -172,7 +174,7 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
           event.preventDefault();
           setHighlight(q, idx);
           handleToggle(q, q.options[idx].label, { submitOnComplete: true });
-        } else if (idx === q.options.length) {
+        } else if (idx === q.options.length && q.allowCustom !== false) {
           event.preventDefault();
           setHighlight(q, q.options.length);
           focusCustomInput();
@@ -183,11 +185,11 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
       if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         if (!rowNavEnabled) return;
         event.preventDefault();
-        const total = q.options.length + 1; // +1: the free-text row
+        const total = q.options.length + (q.allowCustom === false ? 0 : 1);
         const delta = event.key === 'ArrowUp' ? -1 : 1;
         const next = ((highlightedIndex ?? 0) + delta + total) % total;
         setHighlight(q, next);
-        if (next === q.options.length) focusCustomInput();
+        if (q.allowCustom !== false && next === q.options.length) focusCustomInput();
         return;
       }
 
@@ -212,8 +214,8 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
           !q.multiSelect &&
           highlightedIndex != null &&
           highlightedIndex < q.options.length &&
-          !(custom[q.question] ?? '').trim() &&
-          picks[q.question] !== q.options[highlightedIndex].label
+          !(custom[getQuestionKey(q)] ?? '').trim() &&
+          picks[getQuestionKey(q)] !== q.options[highlightedIndex].label
         ) {
           event.preventDefault();
           handleToggle(q, q.options[highlightedIndex].label, { submitOnComplete: true });
@@ -341,9 +343,9 @@ export const AskUserQuestionView = memo<AskUserQuestionViewProps>((props) => {
       ) : (
         activeQuestion && (
           <QuestionPanel
-            answer={picks[activeQuestion.question]}
+            answer={picks[getQuestionKey(activeQuestion)]}
             customPlaceholder={labels.customPlaceholder}
-            customValue={custom[activeQuestion.question] ?? ''}
+            customValue={custom[getQuestionKey(activeQuestion)] ?? ''}
             disabled={expired || submitting}
             highlightedIndex={highlightedIndex}
             multiSelectTag={labels.multiSelectTag}
