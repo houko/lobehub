@@ -23,7 +23,7 @@ import {
   isHeterogeneousAgentAuthRequired,
   resolveHeterogeneousAgentCommand,
 } from '@lobechat/heterogeneous-agents';
-import type { AskUserBridge } from '@lobechat/heterogeneous-agents/askUser';
+import { AskUserBridge } from '@lobechat/heterogeneous-agents/askUser';
 import type {
   LobeBuiltinMcpServer,
   McpToolResult,
@@ -351,7 +351,7 @@ interface InterventionSlot {
   /** Resolves once bridge.events() iterator ends (after `cancelAll`). */
   pumpDone?: Promise<void>;
   /** Path to the per-op temp `mcp.json` we wrote for `--mcp-config`. */
-  tmpConfigPath: string;
+  tmpConfigPath?: string;
 }
 
 export default class HeterogeneousAgentCtr {
@@ -1404,6 +1404,18 @@ export default class HeterogeneousAgentCtr {
     });
     void this.writeCliTraceFile(traceSession, 'stdin.txt', inputPayload);
 
+    const interventionBridge = new AskUserBridge(params.operationId);
+    const interventionSlot: InterventionSlot = { bridge: interventionBridge };
+    this.opIdToIntervention.set(params.operationId, interventionSlot);
+    const interventionPumpDone = (async () => {
+      for await (const event of interventionBridge.events()) {
+        this.broadcast('heteroAgentEvent', { event, sessionId: session.sessionId });
+      }
+    })().catch((error) => {
+      logger.warn('Codex app-server intervention bridge pump error:', error);
+    });
+    interventionSlot.pumpDone = interventionPumpDone;
+
     const appServerSession = new CodexAppServerSession({
       args: session.args,
       clientVersion: electronApp.getVersion(),
@@ -1419,6 +1431,26 @@ export default class HeterogeneousAgentCtr {
             event,
             sessionId: session.sessionId,
           });
+        }
+      },
+      onIntervention: async (request, signal) => {
+        const pending = interventionBridge.pending(
+          {
+            apiName: 'askUserQuestion',
+            arguments: request.arguments,
+            identifier: 'codex',
+            toolCallId: request.toolCallId,
+          },
+          { timeoutMs: request.timeoutMs },
+        );
+        const abort = () => interventionBridge.cancel(request.toolCallId, 'session_ended');
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once: true });
+
+        try {
+          return await pending;
+        } finally {
+          signal.removeEventListener('abort', abort);
         }
       },
       onModel: (model) => {
@@ -1476,6 +1508,11 @@ export default class HeterogeneousAgentCtr {
         cause: error,
       });
     } finally {
+      interventionBridge.cancelAll();
+      await interventionPumpDone;
+      if (this.opIdToIntervention.get(params.operationId) === interventionSlot) {
+        this.opIdToIntervention.delete(params.operationId);
+      }
       if (session.appServerSession === appServerSession) session.appServerSession = undefined;
     }
   }
@@ -2001,6 +2038,7 @@ export default class HeterogeneousAgentCtr {
    */
   private unlinkPendingInterventionConfigsSync = (): void => {
     for (const [, intervention] of this.opIdToIntervention) {
+      if (!intervention.tmpConfigPath) continue;
       try {
         unlinkSync(intervention.tmpConfigPath);
       } catch {

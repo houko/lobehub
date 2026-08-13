@@ -32,7 +32,11 @@ const CODEX_RETRY_AT_PATTERN =
   /\btry again at\s+(\d{1,2})(?::(\d{2}))?(?:(AM|PM)|\s+(AM|PM))?(?:\s+\(([^()]+)\))?/i;
 
 interface CodexBaseItem {
+  content_items?: unknown[] | null;
+  failure?: unknown;
   id: string;
+  output?: unknown;
+  result?: unknown;
   status?: string;
   type: string;
 }
@@ -55,6 +59,7 @@ interface TodoListPluginItem {
 
 interface StreamedCommandOutput {
   prefix: string;
+  terminalInteractions: Array<{ processId?: string; stdin: string }>;
   totalLength: number;
   truncated: boolean;
 }
@@ -449,6 +454,22 @@ const getToolContent = (item: CodexToolItem, isSuccess: boolean): string => {
 
   if (!isSuccess) return getToolFailureContent(item);
 
+  if (typeof item.output === 'string') return item.output;
+  if (item.type === 'dynamic_tool_call' && Array.isArray(item.content_items)) {
+    return item.content_items
+      .map((contentItem) =>
+        isRecord(contentItem)
+          ? getRecordString(contentItem, 'text') ||
+            getRecordString(contentItem, 'imageUrl') ||
+            getRecordString(contentItem, 'audioUrl') ||
+            stringifyUnknown(contentItem)
+          : stringifyUnknown(contentItem),
+      )
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  if (item.type === 'image_generation' && typeof item.result === 'string') return item.result;
+
   if (isTodoListItem(item)) return summarizeTodoList(item);
   if (isFileChangeItem(item)) return summarizeFileChange(item);
   if (isMcpToolCallItem(item)) return getMcpResultContent(item);
@@ -494,7 +515,10 @@ const truncateCodexCommandOutput = (content: string) => {
   };
 };
 
-const getToolResultData = (item: CodexToolItem): ToolResultData => {
+const getToolResultData = (
+  item: CodexToolItem,
+  livePluginState?: Record<string, unknown>,
+): ToolResultData => {
   const isSuccess = isSuccessfulToolCompletion(item);
   const output = getToolContent(item, isSuccess);
 
@@ -506,6 +530,7 @@ const getToolResultData = (item: CodexToolItem): ToolResultData => {
       content: truncatedOutput.output,
       isError: !isSuccess,
       pluginState: {
+        ...livePluginState,
         ...(exitCode !== undefined ? { exitCode } : {}),
         ...(isSuccess
           ? {}
@@ -540,10 +565,12 @@ const getToolResultData = (item: CodexToolItem): ToolResultData => {
             ? synthesizeWebSearchPluginState(item)
             : undefined;
 
+  const finalPluginState =
+    livePluginState || pluginState ? { ...livePluginState, ...pluginState } : undefined;
   return {
     content: output,
     isError: !isSuccess,
-    ...(pluginState ? { pluginState } : {}),
+    ...(finalPluginState ? { pluginState: finalPluginState } : {}),
     toolCallId: item.id,
   };
 };
@@ -800,13 +827,20 @@ const getCodexRateLimitInfo = (message: string): HeterogeneousRateLimitInfo | un
 export class CodexAdapter implements AgentEventAdapter {
   private currentAgentMessageItemId?: string;
   private currentModel?: string;
+  private currentReasoningItemId?: string;
   private lastCumulativeUsage?: UsageData;
   sessionId?: string;
 
+  private currentStepText = '';
+  private hasReasoningInCurrentStep = false;
   private hasTextInCurrentStep = false;
   private hasToolActivitySinceAgentMessage = false;
   private streamedAgentMessageText = new Map<string, string>();
   private streamedCommandOutput = new Map<string, StreamedCommandOutput>();
+  private streamedMcpProgress = new Map<string, string[]>();
+  private streamedPlanPrefix = new Map<string, string>();
+  private streamedPlanText = new Map<string, string>();
+  private streamedReasoningText = new Map<string, string>();
   private deferredTodoCompletions = new Map<string, CodexTodoListItem>();
   private pendingTodoToolCalls = new Set<string>();
   private pendingToolCalls = new Set<string>();
@@ -814,6 +848,7 @@ export class CodexAdapter implements AgentEventAdapter {
   private pendingTurnStartBoundary = false;
   private stepToolCalls: ToolCallPayload[] = [];
   private stepToolCallIds = new Set<string>();
+  private textSnapshotSeq = 0;
   /** Monotonic within this adapter operation, independently per tool call. */
   private toolStateSnapshotSeqByCallId = new Map<string, number>();
   private started = false;
@@ -843,6 +878,11 @@ export class CodexAdapter implements AgentEventAdapter {
       case 'turn.completed': {
         return this.handleTurnCompleted(raw);
       }
+      case 'stream.retry': {
+        return [
+          this.makeEvent('stream_retry', { message: raw.message, provider: CODEX_IDENTIFIER }),
+        ];
+      }
       case 'error':
       case 'turn.failed': {
         return this.handleTerminalError(raw);
@@ -856,8 +896,20 @@ export class CodexAdapter implements AgentEventAdapter {
       case 'item.agent_message.delta': {
         return this.handleAgentMessageDelta(raw);
       }
+      case 'item.plan.delta': {
+        return this.handlePlanDelta(raw);
+      }
+      case 'item.reasoning.delta': {
+        return this.handleReasoningDelta(raw);
+      }
       case 'item.command_execution.output_delta': {
         return this.handleCommandOutputDelta(raw);
+      }
+      case 'item.command_execution.terminal_interaction': {
+        return this.handleTerminalInteraction(raw);
+      }
+      case 'item.mcp_tool_call.progress': {
+        return this.handleMcpToolProgress(raw);
       }
       case 'item.completed': {
         return this.handleItemCompleted(raw.item);
@@ -959,10 +1011,17 @@ export class CodexAdapter implements AgentEventAdapter {
 
   private handleTurnStarted(): HeterogeneousAgentEvent[] {
     this.currentAgentMessageItemId = undefined;
+    this.currentReasoningItemId = undefined;
+    this.currentStepText = '';
+    this.hasReasoningInCurrentStep = false;
     this.hasTextInCurrentStep = false;
     this.hasToolActivitySinceAgentMessage = false;
     this.streamedAgentMessageText.clear();
     this.streamedCommandOutput.clear();
+    this.streamedMcpProgress.clear();
+    this.streamedPlanPrefix.clear();
+    this.streamedPlanText.clear();
+    this.streamedReasoningText.clear();
     this.resetStepToolCalls();
 
     if (!this.started) {
@@ -976,7 +1035,14 @@ export class CodexAdapter implements AgentEventAdapter {
   }
 
   private handleItemStarted(item: any): HeterogeneousAgentEvent[] {
-    if (!item?.id || !item?.type || item.type === 'agent_message') return [];
+    if (
+      !item?.id ||
+      !item?.type ||
+      item.type === 'agent_message' ||
+      item.type === 'plan' ||
+      item.type === 'reasoning'
+    )
+      return [];
 
     this.hasToolActivitySinceAgentMessage = true;
 
@@ -1026,13 +1092,7 @@ export class CodexAdapter implements AgentEventAdapter {
       !!itemId &&
       itemId !== this.currentAgentMessageItemId;
 
-    if (shouldStartNewStep) {
-      this.stepIndex += 1;
-      this.resetStepToolCalls();
-      this.hasTextInCurrentStep = false;
-      events.push(this.makeEvent('stream_end', {}));
-      events.push(this.makeEvent('stream_start', this.getStreamStartData({ newStep: true })));
-    }
+    if (shouldStartNewStep) this.startNewStep(events);
 
     const chunk =
       this.hasTextInCurrentStep && itemId !== this.currentAgentMessageItemId
@@ -1042,6 +1102,7 @@ export class CodexAdapter implements AgentEventAdapter {
     this.currentAgentMessageItemId = itemId;
     this.hasTextInCurrentStep = true;
     this.hasToolActivitySinceAgentMessage = false;
+    this.currentStepText += chunk;
     events.push(
       this.makeEvent('stream_chunk', {
         chunkType: 'text',
@@ -1052,6 +1113,76 @@ export class CodexAdapter implements AgentEventAdapter {
     return events;
   }
 
+  private handlePlanDelta(raw: any): HeterogeneousAgentEvent[] {
+    const itemId = getStringValue(raw?.item_id) || getStringValue(raw?.itemId);
+    const delta = typeof raw?.delta === 'string' ? raw.delta : undefined;
+    if (!itemId || delta === undefined || delta.length === 0) return [];
+
+    const text = `${this.streamedPlanText.get(itemId) ?? ''}${delta}`;
+    this.streamedPlanText.set(itemId, text);
+    return this.handlePlanSnapshot(itemId, text);
+  }
+
+  private handlePlanSnapshot(itemId: string, text: string): HeterogeneousAgentEvent[] {
+    const events: HeterogeneousAgentEvent[] = this.consumePendingTurnStart();
+    const shouldStartNewStep =
+      this.hasToolActivitySinceAgentMessage && itemId !== this.currentAgentMessageItemId;
+    if (shouldStartNewStep) this.startNewStep(events);
+
+    let prefix = this.streamedPlanPrefix.get(itemId);
+    if (prefix === undefined) {
+      prefix = this.currentStepText
+        ? `${this.currentStepText}${itemId === this.currentAgentMessageItemId ? '' : '\n\n'}`
+        : '';
+      this.streamedPlanPrefix.set(itemId, prefix);
+    }
+
+    this.currentAgentMessageItemId = itemId;
+    this.currentStepText = `${prefix}${text}`;
+    this.hasTextInCurrentStep = true;
+    this.hasToolActivitySinceAgentMessage = false;
+    this.textSnapshotSeq += 1;
+    events.push(
+      this.makeEvent('stream_chunk', {
+        chunkType: 'text',
+        content: this.currentStepText,
+        snapshotMode: 'replace',
+        snapshotSeq: this.textSnapshotSeq,
+      }),
+    );
+    return events;
+  }
+
+  private handleReasoningDelta(raw: any): HeterogeneousAgentEvent[] {
+    const itemId = getStringValue(raw?.item_id) || getStringValue(raw?.itemId);
+    const delta = typeof raw?.delta === 'string' ? raw.delta : undefined;
+    if (!itemId || delta === undefined || delta.length === 0) return [];
+
+    this.streamedReasoningText.set(
+      itemId,
+      `${this.streamedReasoningText.get(itemId) ?? ''}${delta}`,
+    );
+    return this.handleReasoningContent(itemId, delta);
+  }
+
+  private handleReasoningContent(itemId: string | undefined, reasoning: string) {
+    const events: HeterogeneousAgentEvent[] = this.consumePendingTurnStart();
+    const shouldStartNewStep =
+      this.hasToolActivitySinceAgentMessage && !!itemId && itemId !== this.currentReasoningItemId;
+
+    if (shouldStartNewStep) this.startNewStep(events);
+
+    const chunk =
+      this.hasReasoningInCurrentStep && itemId !== this.currentReasoningItemId
+        ? `\n\n${reasoning}`
+        : reasoning;
+    this.currentReasoningItemId = itemId;
+    this.hasReasoningInCurrentStep = true;
+    this.hasToolActivitySinceAgentMessage = false;
+    events.push(this.makeEvent('stream_chunk', { chunkType: 'reasoning', reasoning: chunk }));
+    return events;
+  }
+
   private handleCommandOutputDelta(raw: any): HeterogeneousAgentEvent[] {
     const itemId = getStringValue(raw?.item_id) || getStringValue(raw?.itemId);
     const delta = typeof raw?.delta === 'string' ? raw.delta : undefined;
@@ -1059,6 +1190,7 @@ export class CodexAdapter implements AgentEventAdapter {
 
     const previous = this.streamedCommandOutput.get(itemId) ?? {
       prefix: '',
+      terminalInteractions: [],
       totalLength: 0,
       truncated: false,
     };
@@ -1070,7 +1202,12 @@ export class CodexAdapter implements AgentEventAdapter {
     const prefix = previous.prefix + appended;
     const totalLength = previous.totalLength + delta.length;
     const truncated = totalLength > prefix.length;
-    this.streamedCommandOutput.set(itemId, { prefix, totalLength, truncated });
+    this.streamedCommandOutput.set(itemId, {
+      prefix,
+      terminalInteractions: previous.terminalInteractions,
+      totalLength,
+      truncated,
+    });
     if (previous.truncated) return [];
 
     const snapshot = truncated
@@ -1081,6 +1218,51 @@ export class CodexAdapter implements AgentEventAdapter {
         isBackground: false,
         output: snapshot,
         stdout: snapshot,
+        terminalInteractions: previous.terminalInteractions,
+      }),
+    ];
+  }
+
+  private handleTerminalInteraction(raw: any): HeterogeneousAgentEvent[] {
+    const itemId = getStringValue(raw?.item_id) || getStringValue(raw?.itemId);
+    if (!itemId || !this.pendingToolCalls.has(itemId) || typeof raw?.stdin !== 'string') return [];
+
+    const previous = this.streamedCommandOutput.get(itemId) ?? {
+      prefix: '',
+      terminalInteractions: [],
+      totalLength: 0,
+      truncated: false,
+    };
+    const terminalInteractions = [
+      ...previous.terminalInteractions,
+      {
+        ...(typeof raw.process_id === 'string' ? { processId: raw.process_id } : {}),
+        stdin: raw.stdin,
+      },
+    ];
+    this.streamedCommandOutput.set(itemId, { ...previous, terminalInteractions });
+    return [
+      this.createToolStateEvent(itemId, {
+        isBackground: false,
+        output: previous.prefix,
+        stdout: previous.prefix,
+        terminalInteractions,
+      }),
+    ];
+  }
+
+  private handleMcpToolProgress(raw: any): HeterogeneousAgentEvent[] {
+    const itemId = getStringValue(raw?.item_id) || getStringValue(raw?.itemId);
+    const message = getStringValue(raw?.message);
+    if (!itemId || !message || !this.pendingToolCalls.has(itemId)) return [];
+
+    const progressMessages = [...(this.streamedMcpProgress.get(itemId) ?? []), message];
+    this.streamedMcpProgress.set(itemId, progressMessages);
+    return [
+      this.createToolStateEvent(itemId, {
+        progress: message,
+        progressMessages,
+        status: 'in_progress',
       }),
     ];
   }
@@ -1103,8 +1285,41 @@ export class CodexAdapter implements AgentEventAdapter {
       return this.handleAgentMessageContent(item.id, item.text);
     }
 
+    if (item.type === 'reasoning') {
+      const text = typeof item.text === 'string' ? item.text : '';
+      const streamedText = item.id ? this.streamedReasoningText.get(item.id) : undefined;
+      if (item.id) this.streamedReasoningText.delete(item.id);
+      if (streamedText !== undefined) {
+        const remainingText = text.startsWith(streamedText) ? text.slice(streamedText.length) : '';
+        return remainingText ? this.handleReasoningContent(item.id, remainingText) : [];
+      }
+      return text ? this.handleReasoningContent(item.id, text) : [];
+    }
+
+    if (item.type === 'plan') {
+      const text = typeof item.text === 'string' ? item.text : '';
+      const streamedText = item.id ? this.streamedPlanText.get(item.id) : undefined;
+      if (!item.id) return [];
+
+      const events = text && streamedText !== text ? this.handlePlanSnapshot(item.id, text) : [];
+      this.streamedPlanPrefix.delete(item.id);
+      this.streamedPlanText.delete(item.id);
+      return events;
+    }
+
     if (!item.id) return [];
+    const streamedCommand = this.streamedCommandOutput.get(item.id);
+    const streamedMcpProgress = this.streamedMcpProgress.get(item.id);
     this.streamedCommandOutput.delete(item.id);
+    this.streamedMcpProgress.delete(item.id);
+    const livePluginState = streamedCommand?.terminalInteractions.length
+      ? { terminalInteractions: streamedCommand.terminalInteractions }
+      : streamedMcpProgress?.length
+        ? {
+            progress: streamedMcpProgress.at(-1),
+            progressMessages: streamedMcpProgress,
+          }
+        : undefined;
 
     // Codex emits the same status-less todo completion before both a successful
     // turn completion and an interrupted process exit. Keep it pending until
@@ -1134,7 +1349,9 @@ export class CodexAdapter implements AgentEventAdapter {
     this.pendingTodoToolCalls.delete(item.id);
     this.deferredTodoCompletions.delete(item.id);
     if (belongsToCurrentStep) this.hasToolActivitySinceAgentMessage = true;
-    events.push(...this.createToolCompletionEvents(item as CodexToolItem, toolPayload));
+    events.push(
+      ...this.createToolCompletionEvents(item as CodexToolItem, toolPayload, livePluginState),
+    );
 
     return events;
   }
@@ -1142,8 +1359,9 @@ export class CodexAdapter implements AgentEventAdapter {
   private createToolCompletionEvents(
     item: CodexToolItem,
     toolPayload = toToolPayload(item),
+    livePluginState?: Record<string, unknown>,
   ): HeterogeneousAgentEvent[] {
-    const resultData = getToolResultData(item);
+    const resultData = getToolResultData(item, livePluginState);
     const isSuccess = isSuccessfulToolCompletion(item);
     // Align tool_end with the server/gateway shape — carry the `{ toolCalling }`
     // payload + a `BuiltinToolResult`-shaped `result` so renderer `onAfterCall`
@@ -1198,7 +1416,23 @@ export class CodexAdapter implements AgentEventAdapter {
     this.pendingToolCallStepIndex.clear();
     this.deferredTodoCompletions.clear();
     this.streamedCommandOutput.clear();
+    this.streamedMcpProgress.clear();
+    this.streamedPlanPrefix.clear();
+    this.streamedPlanText.clear();
+    this.streamedReasoningText.clear();
     return events;
+  }
+
+  private startNewStep(events: HeterogeneousAgentEvent[]): void {
+    this.stepIndex += 1;
+    this.resetStepToolCalls();
+    this.currentAgentMessageItemId = undefined;
+    this.currentReasoningItemId = undefined;
+    this.currentStepText = '';
+    this.hasReasoningInCurrentStep = false;
+    this.hasTextInCurrentStep = false;
+    events.push(this.makeEvent('stream_end', {}));
+    events.push(this.makeEvent('stream_start', this.getStreamStartData({ newStep: true })));
   }
 
   private createToolStateEvent(

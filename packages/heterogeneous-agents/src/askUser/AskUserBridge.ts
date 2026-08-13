@@ -23,8 +23,12 @@ export interface InterventionAnswer {
 }
 
 export interface PendingArgs {
+  /** Tool API name rendered by the intervention surface. */
+  apiName?: string;
   /** Whatever the MCP tool's input schema accepted (e.g. `{ questions: [...] }`). */
   arguments: unknown;
+  /** Tool plugin identifier owning the intervention UI. */
+  identifier?: string;
   /**
    * Wire correlation key for this intervention. Used as the `toolCallId`
    * on outbound `agent_intervention_request` events and looked up by
@@ -175,14 +179,11 @@ export class AskUserBridge {
 
       // Emit the intervention request AFTER setting up the pending entry,
       // so any synchronous resolve from a test fixture finds the slot.
-      // Hardcoded to AskUserQuestion for now — the only intervention shape
-      // we support. Take an explicit `apiName` in PendingArgs when adding
-      // more (e.g. CC approval, file picker).
       const data: AgentInterventionRequestData = {
-        apiName: 'askUserQuestion',
+        apiName: args.apiName ?? 'askUserQuestion',
         arguments: JSON.stringify(args.arguments ?? {}),
         deadline,
-        identifier: 'claude-code',
+        identifier: args.identifier ?? 'claude-code',
         toolCallId,
       };
       this.emit({

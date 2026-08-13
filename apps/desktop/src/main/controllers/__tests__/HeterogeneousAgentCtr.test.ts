@@ -101,12 +101,16 @@ const {
   claudeSdkSessionConstructMock,
   codexAppServerCloseMock,
   codexAppServerConstructMock,
+  codexAppServerInterventionMock,
+  codexAppServerInterventionResultMock,
   codexAppServerInterruptMock,
 } = vi.hoisted(() => ({
   claudeSdkSessionCloseMock: vi.fn(),
   claudeSdkSessionConstructMock: vi.fn(),
   codexAppServerCloseMock: vi.fn(),
   codexAppServerConstructMock: vi.fn(),
+  codexAppServerInterventionMock: vi.fn(),
+  codexAppServerInterventionResultMock: vi.fn(),
   codexAppServerInterruptMock: vi.fn(),
 }));
 
@@ -182,6 +186,14 @@ vi.mock('@lobechat/heterogeneous-agents/spawn', async (importOriginal) => {
         transport: 'codex-app-server',
       });
       this.options.onSessionId('thread_app_server');
+      const intervention = codexAppServerInterventionMock();
+      if (intervention) {
+        const result = await this.options.onIntervention(
+          intervention,
+          new AbortController().signal,
+        );
+        codexAppServerInterventionResultMock(result);
+      }
       await this.options.onEvents([
         {
           data: { reason: 'complete', transport: 'codex-app-server' },
@@ -305,6 +317,8 @@ describe('HeterogeneousAgentCtr', () => {
     claudeSdkSessionConstructMock.mockReset();
     codexAppServerCloseMock.mockReset();
     codexAppServerConstructMock.mockReset();
+    codexAppServerInterventionMock.mockReset();
+    codexAppServerInterventionResultMock.mockReset();
     codexAppServerInterruptMock.mockReset();
     loggerInfoMock.mockReset();
     mockGetAllWindows.mockReset();
@@ -1316,6 +1330,70 @@ describe('HeterogeneousAgentCtr', () => {
         agentSessionId: 'thread_app_server',
       });
       expect(send).toHaveBeenCalledWith('heteroAgentSessionComplete', { sessionId });
+    });
+
+    it('routes Codex app-server user input through the existing intervention UI', async () => {
+      codexAppServerInterventionMock.mockReturnValue({
+        arguments: {
+          questions: [
+            {
+              header: 'Scope',
+              options: [{ description: 'Everything', label: 'All' }],
+              question: 'Choose scope',
+            },
+          ],
+        },
+        toolCallId: 'codex-question-1',
+      });
+      const send = vi.fn();
+      mockGetAllWindows.mockReturnValue([
+        {
+          isDestroyed: () => false,
+          webContents: { send },
+        },
+      ]);
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+      } as any);
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codex',
+        args: [],
+        command: 'codex',
+        useCodexAppServer: true,
+      });
+
+      const sendPrompt = ctr.sendPrompt({
+        operationId: 'op-codex-intervention',
+        prompt: 'ask me',
+        sessionId,
+      });
+      await vi.waitFor(() =>
+        expect(send).toHaveBeenCalledWith(
+          'heteroAgentEvent',
+          expect.objectContaining({
+            event: expect.objectContaining({
+              data: expect.objectContaining({
+                apiName: 'askUserQuestion',
+                identifier: 'codex',
+                toolCallId: 'codex-question-1',
+              }),
+              type: 'agent_intervention_request',
+            }),
+            sessionId,
+          }),
+        ),
+      );
+      await ctr.submitIntervention({
+        operationId: 'op-codex-intervention',
+        result: { 'Choose scope': 'All' },
+        toolCallId: 'codex-question-1',
+      });
+      await sendPrompt;
+
+      expect(codexAppServerInterventionResultMock).toHaveBeenCalledWith({
+        result: { 'Choose scope': 'All' },
+      });
     });
 
     it('falls back to codex exec when app-server cannot preserve a CLI argument', async () => {

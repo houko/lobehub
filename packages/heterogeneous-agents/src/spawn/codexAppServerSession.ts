@@ -3,14 +3,22 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 import type { AgentStreamEvent } from '@lobechat/agent-gateway-client';
+import { isRecord } from '@lobechat/utils/object';
 
 import type { UsageData } from '../types';
 import { AgentStreamPipeline } from './agentStreamPipeline';
 import type { HeterogeneousAgentRuntimeStatus } from './claudeAgentSdkSession';
 import { resolveCliSpawnPlan } from './cliSpawn';
+import type { CodexAppServerUserInput, CodexExecItem } from './codexAppServerProtocol';
+import {
+  isKnownCodexAppServerNotificationMethod,
+  normalizeCodexAppServerItem,
+} from './codexAppServerProtocol';
+import { CodexAppServerSubagentRouter } from './codexAppServerSubagents';
 import type { AgentInputPlan } from './input';
 
 const APP_SERVER_RPC_TIMEOUT_MS = 30_000;
+const APP_SERVER_UNSUPPORTED_REQUEST_CODE = -32_000;
 const CODEX_APP_SERVER_TRANSPORT = 'codex-app-server' as const;
 const CODEX_DANGEROUS_BYPASS_FLAG = '--dangerously-bypass-approvals-and-sandbox';
 const CODEX_FULL_AUTO_FLAG = '--full-auto';
@@ -23,18 +31,7 @@ const CODEX_SANDBOX_FLAGS = ['-s', '--sandbox'] as const;
 const CODEX_EPHEMERAL_FLAG = '--ephemeral';
 const CODEX_IGNORE_USER_CONFIG_FLAG = '--ignore-user-config';
 
-interface CodexAppServerTextInput {
-  text: string;
-  text_elements: [];
-  type: 'text';
-}
-
-interface CodexAppServerLocalImageInput {
-  path: string;
-  type: 'localImage';
-}
-
-export type CodexAppServerUserInput = CodexAppServerLocalImageInput | CodexAppServerTextInput;
+export type { CodexAppServerUserInput } from './codexAppServerProtocol';
 
 interface RpcError {
   code?: number;
@@ -81,14 +78,26 @@ interface CodexTurnPlanStep {
   step?: string;
 }
 
-interface CodexAppServerItem {
-  [key: string]: unknown;
-  id?: string;
-  type?: string;
-}
-
 type CodexAppServerApprovalPolicy = 'never' | 'on-request' | 'untrusted';
 type CodexAppServerSandboxMode = 'danger-full-access' | 'read-only' | 'workspace-write';
+
+export interface CodexAppServerInterventionQuestion {
+  header: string;
+  multiSelect?: boolean;
+  options: Array<{ description: string; label: string }>;
+  question: string;
+}
+
+export interface CodexAppServerInterventionRequest {
+  arguments: { questions: CodexAppServerInterventionQuestion[] };
+  timeoutMs?: number;
+  toolCallId: string;
+}
+
+export interface CodexAppServerInterventionAnswer {
+  cancelled?: boolean;
+  result?: unknown;
+}
 
 export interface CodexAppServerThreadParams {
   approvalPolicy: CodexAppServerApprovalPolicy;
@@ -110,6 +119,10 @@ export interface CodexAppServerSessionOptions {
   initialModel?: string | undefined;
   input: CodexAppServerUserInput[];
   onEvents: (events: AgentStreamEvent[]) => Promise<void> | void;
+  onIntervention?: (
+    request: CodexAppServerInterventionRequest,
+    signal: AbortSignal,
+  ) => Promise<CodexAppServerInterventionAnswer>;
   onModel?: (model: string) => void;
   onRawMessage: (line: string) => Promise<void> | void;
   onRuntimeStatus: (status: HeterogeneousAgentRuntimeStatus) => void;
@@ -393,83 +406,6 @@ export const buildCodexAppServerInput = (plan: AgentInputPlan): CodexAppServerUs
   return input;
 };
 
-const normalizeStatus = (status: unknown): unknown => {
-  if (status === 'inProgress') return 'in_progress';
-  if (status === 'declined') return 'failed';
-  return status;
-};
-
-/** Convert stable v2 app-server items into the existing `codex exec --json` item shape. */
-const normalizeAppServerItem = (item: CodexAppServerItem): CodexAppServerItem | undefined => {
-  switch (item.type) {
-    case 'agentMessage': {
-      return { ...item, type: 'agent_message' };
-    }
-    case 'commandExecution': {
-      return {
-        ...item,
-        aggregated_output: item.aggregatedOutput,
-        exit_code: item.exitCode,
-        status: normalizeStatus(item.status),
-        type: 'command_execution',
-      };
-    }
-    case 'fileChange': {
-      const changes = Array.isArray(item.changes)
-        ? item.changes.map((change) => {
-            const value = change as Record<string, unknown>;
-            const kind = value.kind;
-            const kindValue =
-              typeof kind === 'object' && kind !== null
-                ? (kind as Record<string, unknown>)
-                : undefined;
-            return {
-              ...value,
-              diffText: value.diff,
-              kind: kindValue?.movePath ? 'rename' : (kindValue?.type ?? kind),
-            };
-          })
-        : [];
-      return {
-        ...item,
-        changes,
-        status: normalizeStatus(item.status),
-        type: 'file_change',
-      };
-    }
-    case 'mcpToolCall': {
-      return {
-        ...item,
-        status: normalizeStatus(item.status),
-        type: 'mcp_tool_call',
-      };
-    }
-    case 'collabAgentToolCall': {
-      return {
-        ...item,
-        agents_states: item.agentsStates,
-        receiver_thread_ids: item.receiverThreadIds,
-        sender_thread_id: item.senderThreadId,
-        status: normalizeStatus(item.status),
-        type: 'collab_tool_call',
-      };
-    }
-    case 'dynamicToolCall': {
-      return {
-        ...item,
-        status: normalizeStatus(item.status),
-        type: 'dynamic_tool_call',
-      };
-    }
-    case 'webSearch': {
-      return { ...item, status: normalizeStatus(item.status), type: 'web_search' };
-    }
-    default: {
-      return;
-    }
-  }
-};
-
 const toExecUsage = (usage: CodexTokenUsageBreakdown | undefined) =>
   usage
     ? {
@@ -480,16 +416,96 @@ const toExecUsage = (usage: CodexTokenUsageBreakdown | undefined) =>
       }
     : undefined;
 
+const toStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  return typeof value === 'string' && value ? [value] : [];
+};
+
+const readInterventionResult = (result: unknown): Record<string, unknown> =>
+  isRecord(result) ? result : {};
+
+const getQuestionAnswer = (result: Record<string, unknown>, question: string): string[] => {
+  const value = result[question];
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  return typeof value === 'string' && value ? [value] : [];
+};
+
+interface SchemaOption {
+  description: string;
+  label: string;
+  value: unknown;
+}
+
+const getSchemaOptions = (schema: Record<string, unknown>) => {
+  const optionSchema = schema.type === 'array' && isRecord(schema.items) ? schema.items : schema;
+  if (Array.isArray(optionSchema.enum)) {
+    const names = Array.isArray(optionSchema.enumNames) ? optionSchema.enumNames : [];
+    return optionSchema.enum.map<SchemaOption>((value, index) => ({
+      description: '',
+      label: typeof names[index] === 'string' ? names[index] : String(value),
+      value,
+    }));
+  }
+
+  const titledOptions = Array.isArray(optionSchema.oneOf)
+    ? optionSchema.oneOf
+    : Array.isArray(optionSchema.anyOf)
+      ? optionSchema.anyOf
+      : undefined;
+  if (titledOptions) {
+    return titledOptions.flatMap<SchemaOption>((option) => {
+      if (!isRecord(option) || option.const === undefined) return [];
+      return [
+        {
+          description: typeof option.description === 'string' ? option.description : '',
+          label: typeof option.title === 'string' ? option.title : String(option.const),
+          value: option.const,
+        },
+      ];
+    });
+  }
+
+  if (schema.type === 'boolean') {
+    return [
+      { description: '', label: 'true', value: true },
+      { description: '', label: 'false', value: false },
+    ];
+  }
+
+  return [];
+};
+
+const coerceSchemaAnswer = (
+  answer: string[],
+  schema: Record<string, unknown>,
+  options: SchemaOption[],
+): unknown => {
+  const valuesByLabel = new Map(options.map(({ label, value }) => [label, value]));
+  const coerceValue = (value: string) => {
+    if (valuesByLabel.has(value)) return valuesByLabel.get(value);
+    if (schema.type === 'boolean') return value === 'true';
+    if (schema.type === 'integer') return Number.parseInt(value, 10);
+    if (schema.type === 'number') return Number(value);
+    return value;
+  };
+
+  return schema.type === 'array' ? answer.map(coerceValue) : coerceValue(answer[0]);
+};
+
 export class CodexAppServerSession {
   private readonly pipeline: AgentStreamPipeline;
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
+  private readonly pendingServerRequests = new Map<string, AbortController>();
+  private readonly reportedDiagnostics = new Set<string>();
+  private readonly subagentRouter: CodexAppServerSubagentRouter;
   private readonly threadParams: CodexAppServerThreadParams;
   private activeFileChangeItemId?: string;
   private child?: ChildProcess;
   private closedByHost = false;
+  private completedItemIds = new Set<string>();
   private fatalError?: Error;
   private latestTokenUsage?: CodexThreadTokenUsage;
-  private latestPlanItem?: CodexAppServerItem;
+  private latestPlanItem?: CodexExecItem;
   private notificationQueue = Promise.resolve();
   private nextRequestId = 0;
   private stdoutBuffer = '';
@@ -510,6 +526,12 @@ export class CodexAppServerSession {
       cwd: this.threadParams.cwd,
       initialCumulativeUsage: options.initialCumulativeUsage,
       initialModel: options.initialModel,
+      operationId: options.operationId,
+    });
+    this.subagentRouter = new CodexAppServerSubagentRouter({
+      cwd: this.threadParams.cwd,
+      onDiagnostic: (key, message) => this.reportDiagnostic(key, message),
+      onEvents: (events) => this.emitEvents(events),
       operationId: options.operationId,
     });
   }
@@ -594,6 +616,7 @@ export class CodexAppServerSession {
     this.closedByHost = true;
     this.rejectTurn?.(new Error('Codex app-server session closed by host'));
     this.rejectPendingRequests(new Error('Codex app-server session closed by host'));
+    this.abortServerRequests();
     this.shutdownProcess('SIGTERM');
     this.emitStatus('closed');
   }
@@ -651,7 +674,9 @@ export class CodexAppServerSession {
   private handleRpcMessage(message: RpcMessage): void {
     if (message.method) {
       if (message.id !== undefined) {
-        this.handleServerRequest(message);
+        void this.handleServerRequest(message).catch((error) => {
+          this.fail(error instanceof Error ? error : new Error(String(error)));
+        });
         return;
       }
 
@@ -677,7 +702,13 @@ export class CodexAppServerSession {
   }
 
   private async handleNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    if (method === 'serverRequest/resolved') {
+      this.resolveServerRequest(params.requestId);
+      return;
+    }
+
     if (this.threadId && typeof params.threadId === 'string' && params.threadId !== this.threadId) {
+      await this.subagentRouter.routeNotification(params.threadId, method, params);
       return;
     }
 
@@ -685,23 +716,16 @@ export class CodexAppServerSession {
       case 'turn/started': {
         const turn = params.turn as { id?: string } | undefined;
         this.turnId = turn?.id ?? this.turnId;
+        this.completedItemIds.clear();
         await this.emitSynthetic({ turn, type: 'turn.started' });
         return;
       }
       case 'item/started':
       case 'item/completed': {
-        const item = normalizeAppServerItem((params.item ?? {}) as CodexAppServerItem);
-        if (!item) return;
-        if (method === 'item/started' && item.type === 'file_change' && item.id) {
-          this.activeFileChangeItemId = item.id;
-        }
-        await this.emitSynthetic({
-          item,
-          type: method === 'item/started' ? 'item.started' : 'item.completed',
-        });
-        if (method === 'item/completed' && item.id === this.activeFileChangeItemId) {
-          this.activeFileChangeItemId = undefined;
-        }
+        await this.emitAppServerItem(
+          (params.item ?? {}) as CodexExecItem,
+          method === 'item/started' ? 'item.started' : 'item.completed',
+        );
         return;
       }
       case 'item/agentMessage/delta': {
@@ -712,11 +736,85 @@ export class CodexAppServerSession {
         });
         return;
       }
+      case 'item/plan/delta': {
+        await this.emitSynthetic({
+          delta: params.delta,
+          item_id: params.itemId,
+          type: 'item.plan.delta',
+        });
+        return;
+      }
+      case 'item/reasoning/summaryPartAdded': {
+        if (typeof params.summaryIndex !== 'number' || params.summaryIndex <= 0) return;
+        await this.emitSynthetic({
+          delta: '\n\n',
+          item_id: params.itemId,
+          type: 'item.reasoning.delta',
+        });
+        return;
+      }
+      case 'item/reasoning/summaryTextDelta': {
+        await this.emitSynthetic({
+          delta: params.delta,
+          item_id: params.itemId,
+          type: 'item.reasoning.delta',
+        });
+        return;
+      }
+      case 'item/reasoning/textDelta': {
+        await this.reportDiagnostic(
+          'raw-reasoning-omitted',
+          'Codex app-server raw reasoning is omitted; readable reasoning summaries remain enabled.',
+        );
+        return;
+      }
       case 'item/commandExecution/outputDelta': {
         await this.emitSynthetic({
           delta: params.delta,
           item_id: params.itemId,
           type: 'item.command_execution.output_delta',
+        });
+        return;
+      }
+      case 'item/commandExecution/terminalInteraction': {
+        await this.emitSynthetic({
+          item_id: params.itemId,
+          process_id: params.processId,
+          stdin: params.stdin,
+          type: 'item.command_execution.terminal_interaction',
+        });
+        return;
+      }
+      case 'item/fileChange/patchUpdated': {
+        const normalized = normalizeCodexAppServerItem({
+          changes: Array.isArray(params.changes) ? params.changes : [],
+          id: typeof params.itemId === 'string' ? params.itemId : undefined,
+          status: 'inProgress',
+          type: 'fileChange',
+        });
+        if (normalized.disposition === 'emit') {
+          await this.emitSynthetic({ item: normalized.item, type: 'item.updated' });
+        }
+        return;
+      }
+      case 'item/fileChange/outputDelta': {
+        if (typeof params.itemId !== 'string' || typeof params.delta !== 'string') return;
+        await this.emitSynthetic({
+          item: {
+            changes: [{ diffText: params.delta }],
+            id: params.itemId,
+            status: 'in_progress',
+            type: 'file_change',
+          },
+          type: 'item.updated',
+        });
+        return;
+      }
+      case 'item/mcpToolCall/progress': {
+        await this.emitSynthetic({
+          item_id: params.itemId,
+          message: params.message,
+          type: 'item.mcp_tool_call.progress',
         });
         return;
       }
@@ -736,7 +834,7 @@ export class CodexAppServerSession {
       case 'turn/plan/updated': {
         const plan = Array.isArray(params.plan) ? (params.plan as CodexTurnPlanStep[]) : [];
         const planItemId = `turn-plan-${String(params.turnId ?? this.turnId ?? 'current')}`;
-        const item: CodexAppServerItem = {
+        const item: CodexExecItem = {
           id: planItemId,
           items: plan
             .filter((step) => typeof step.step === 'string' && step.step.trim())
@@ -754,17 +852,74 @@ export class CodexAppServerSession {
         return;
       }
       case 'error': {
-        if (params.willRetry === true) return;
         const error = params.error as { message?: string } | undefined;
+        if (params.willRetry === true) {
+          await this.emitSynthetic({
+            message: error?.message ?? 'Codex is retrying after a transient error',
+            type: 'stream.retry',
+          });
+          return;
+        }
         await this.emitSynthetic({
           message: error?.message ?? 'Codex execution failed',
           type: 'error',
         });
         return;
       }
+      case 'model/rerouted': {
+        if (typeof params.toModel === 'string' && params.toModel) {
+          this.options.onModel?.(params.toModel);
+          await this.emitEvents(this.pipeline.configureSession({ model: params.toModel }));
+        }
+        await this.reportDiagnostic(
+          `model-rerouted:${String(params.fromModel)}:${String(params.toModel)}`,
+          `Codex app-server rerouted the model from ${String(params.fromModel)} to ${String(params.toModel)}.`,
+        );
+        return;
+      }
+      case 'warning':
+      case 'guardianWarning': {
+        await this.reportDiagnostic(
+          `${method}:${String(params.message)}`,
+          `Codex app-server ${method}: ${String(params.message ?? 'unknown warning')}`,
+        );
+        return;
+      }
+      case 'configWarning':
+      case 'deprecationNotice': {
+        const details = typeof params.details === 'string' ? ` ${params.details}` : '';
+        await this.reportDiagnostic(
+          `${method}:${String(params.summary)}:${details}`,
+          `Codex app-server ${method}: ${String(params.summary ?? 'unknown warning')}${details}`,
+        );
+        return;
+      }
+      case 'thread/compacted':
+      case 'hook/started':
+      case 'hook/completed':
+      case 'item/autoApprovalReview/started':
+      case 'item/autoApprovalReview/completed':
+      case 'model/verification':
+      case 'model/safetyBuffering/updated':
+      case 'turn/moderationMetadata': {
+        await this.reportDiagnostic(
+          `acknowledged-notification:${method}`,
+          `Codex app-server notification acknowledged without an exec JSON equivalent: ${method}`,
+        );
+        return;
+      }
       case 'turn/completed': {
-        const turn = params.turn as { error?: { message?: string }; id?: string; status?: string };
+        const turn = params.turn as {
+          error?: { message?: string };
+          id?: string;
+          items?: CodexExecItem[];
+          status?: string;
+        };
         this.turnId = turn.id ?? this.turnId;
+        for (const item of turn.items ?? []) {
+          if (item.id && this.completedItemIds.has(item.id)) continue;
+          await this.emitAppServerItem(item, 'item.completed');
+        }
         if (turn.status === 'completed') {
           if (this.latestPlanItem) {
             await this.emitSynthetic({
@@ -796,10 +951,18 @@ export class CodexAppServerSession {
         this.resolveTurn?.();
         return;
       }
+      default: {
+        await this.reportDiagnostic(
+          `${isKnownCodexAppServerNotificationMethod(method) ? 'acknowledged' : 'unknown'}-notification:${method}`,
+          isKnownCodexAppServerNotificationMethod(method)
+            ? `Codex app-server notification acknowledged without an exec JSON equivalent: ${method}`
+            : `Unknown Codex app-server notification: ${method}`,
+        );
+      }
     }
   }
 
-  private handleServerRequest(message: RpcMessage): void {
+  private async handleServerRequest(message: RpcMessage): Promise<void> {
     if (!this.child?.stdin || message.id === undefined) return;
 
     if (
@@ -807,8 +970,80 @@ export class CodexAppServerSession {
       message.method === 'item/fileChange/requestApproval'
     ) {
       // This transport only starts non-interactive (`never`) threads. A request is therefore an
-      // unexpected escalation; cancel it rather than silently bypassing the configured boundary.
-      this.writeRpc({ id: message.id, result: { decision: 'cancel' } });
+      // unexpected escalation; decline it rather than silently bypassing the configured boundary.
+      this.writeRpc({ id: message.id, result: { decision: 'decline' } });
+      return;
+    }
+
+    if (message.method === 'applyPatchApproval' || message.method === 'execCommandApproval') {
+      this.writeRpc({
+        id: message.id,
+        result: {
+          decision: {
+            denied: { rejection: 'Approval UI is unavailable in this client.' },
+          },
+        },
+      });
+      return;
+    }
+
+    if (message.method === 'item/permissions/requestApproval') {
+      // The response union has no decline variant. An empty successful grant is still an
+      // approval, so fail closed instead of manufacturing a permission profile.
+      this.writeUnsupportedRequest(
+        message.id,
+        'Permission approval is unavailable in this client.',
+      );
+      return;
+    }
+
+    if (message.method === 'item/tool/requestUserInput') {
+      await this.handleToolRequestUserInput(message);
+      return;
+    }
+
+    if (message.method === 'mcpServer/elicitation/request') {
+      await this.handleMcpElicitation(message);
+      return;
+    }
+
+    if (message.method === 'item/tool/call') {
+      this.writeRpc({
+        id: message.id,
+        result: {
+          contentItems: [
+            {
+              text: `Dynamic tool '${String(message.params?.tool ?? 'unknown')}' is not registered by LobeHub.`,
+              type: 'inputText',
+            },
+          ],
+          success: false,
+        },
+      });
+      await this.reportDiagnostic(
+        `unsupported-dynamic-tool:${String(message.params?.tool)}`,
+        `Codex app-server requested an unregistered dynamic tool: ${String(message.params?.tool ?? 'unknown')}`,
+      );
+      return;
+    }
+
+    if (message.method === 'currentTime/read') {
+      this.writeRpc({ id: message.id, result: { currentTimeAt: Date.now() } });
+      return;
+    }
+
+    if (
+      message.method === 'account/chatgptAuthTokens/refresh' ||
+      message.method === 'attestation/generate'
+    ) {
+      this.writeUnsupportedRequest(
+        message.id,
+        `Codex app-server request is unavailable in this client: ${message.method}`,
+      );
+      await this.reportDiagnostic(
+        `unsupported-server-request:${message.method}`,
+        `Unsupported Codex app-server request: ${message.method}`,
+      );
       return;
     }
 
@@ -816,6 +1051,286 @@ export class CodexAppServerSession {
       error: { code: -32_601, message: `Unsupported Codex app-server request: ${message.method}` },
       id: message.id,
     });
+    await this.reportDiagnostic(
+      `unsupported-server-request:${String(message.method)}`,
+      `Unsupported Codex app-server request: ${String(message.method)}`,
+    );
+  }
+
+  private async handleToolRequestUserInput(message: RpcMessage): Promise<void> {
+    if (message.id === undefined) return;
+    const rawQuestions = Array.isArray(message.params?.questions) ? message.params.questions : [];
+    const questionEntries = rawQuestions.flatMap((value) => {
+      if (!isRecord(value) || typeof value.id !== 'string' || typeof value.question !== 'string') {
+        return [];
+      }
+      return [
+        {
+          id: value.id,
+          isSecret: value.isSecret === true,
+          question: {
+            header: typeof value.header === 'string' ? value.header : '',
+            options: Array.isArray(value.options)
+              ? value.options.flatMap((option) =>
+                  isRecord(option) && typeof option.label === 'string'
+                    ? [
+                        {
+                          description:
+                            typeof option.description === 'string' ? option.description : '',
+                          label: option.label,
+                        },
+                      ]
+                    : [],
+                )
+              : [],
+            question: value.question,
+          } satisfies CodexAppServerInterventionQuestion,
+        },
+      ];
+    });
+
+    if (questionEntries.length === 0) {
+      this.writeUnsupportedRequest(
+        message.id,
+        'Codex requested user input with no valid questions.',
+      );
+      await this.reportDiagnostic(
+        'invalid-user-input-request',
+        'Codex app-server requested user input with no valid questions.',
+      );
+      return;
+    }
+
+    if (questionEntries.some(({ isSecret }) => isSecret)) {
+      this.writeUnsupportedRequest(message.id, 'Secret user input is unavailable in this client.');
+      await this.reportDiagnostic(
+        'secret-user-input-declined',
+        'Codex app-server secret input was declined because the shared intervention UI persists drafts.',
+      );
+      return;
+    }
+
+    const itemId =
+      typeof message.params?.itemId === 'string'
+        ? message.params.itemId
+        : `request-user-input-${String(message.id)}`;
+    const timeoutMs =
+      typeof message.params?.autoResolutionMs === 'number' && message.params.autoResolutionMs > 0
+        ? message.params.autoResolutionMs
+        : undefined;
+    const outcome = await this.requestIntervention(message.id, {
+      arguments: { questions: questionEntries.map(({ question }) => question) },
+      timeoutMs,
+      toolCallId: itemId,
+    });
+    if (!outcome.active) return;
+
+    if (outcome.answer.cancelled) {
+      this.writeUnsupportedRequest(message.id, 'User input was cancelled.');
+      return;
+    }
+
+    const result = readInterventionResult(outcome.answer.result);
+    const freeform = toStringArray(result.__freeform__);
+    const answers = Object.fromEntries(
+      questionEntries.flatMap(({ id, question }, index) => {
+        const values = getQuestionAnswer(result, question.question);
+        const resolved = values.length > 0 ? values : index === 0 ? freeform : [];
+        return resolved.length > 0 ? [[id, { answers: resolved }]] : [];
+      }),
+    );
+    this.writeRpc({ id: message.id, result: { answers } });
+  }
+
+  private async handleMcpElicitation(message: RpcMessage): Promise<void> {
+    if (message.id === undefined) return;
+    const mode = message.params?.mode;
+    if (mode === 'url') {
+      this.writeRpc({
+        id: message.id,
+        result: { _meta: null, action: 'cancel', content: null },
+      });
+      await this.reportDiagnostic(
+        'mcp-url-elicitation-cancelled',
+        'Codex app-server MCP URL elicitation was cancelled because no safe in-app URL consent surface is available.',
+      );
+      return;
+    }
+
+    const schema = isRecord(message.params?.requestedSchema)
+      ? message.params.requestedSchema
+      : undefined;
+    const properties = schema && isRecord(schema.properties) ? schema.properties : undefined;
+    if (!properties || Object.keys(properties).length === 0) {
+      this.writeRpc({
+        id: message.id,
+        result: { _meta: null, action: 'cancel', content: null },
+      });
+      await this.reportDiagnostic(
+        `unsupported-mcp-elicitation:${String(mode)}`,
+        `Codex app-server MCP elicitation has no renderable form schema: ${String(mode ?? 'unknown')}`,
+      );
+      return;
+    }
+
+    const fields = Object.entries(properties).flatMap(([name, value]) => {
+      if (!isRecord(value)) return [];
+      const schemaOptions = getSchemaOptions(value);
+      const question =
+        typeof value.description === 'string'
+          ? value.description
+          : typeof value.title === 'string'
+            ? value.title
+            : name;
+      return [
+        {
+          name,
+          question: {
+            header: typeof value.title === 'string' ? value.title : name,
+            multiSelect: value.type === 'array',
+            options: schemaOptions.map(({ description, label }) => ({ description, label })),
+            question,
+          } satisfies CodexAppServerInterventionQuestion,
+          schemaOptions,
+          schema: value,
+        },
+      ];
+    });
+    const itemId = `mcp-elicitation-${String(message.id)}`;
+    const outcome = await this.requestIntervention(message.id, {
+      arguments: { questions: fields.map(({ question }) => question) },
+      toolCallId: itemId,
+    });
+    if (!outcome.active) return;
+
+    if (outcome.answer.cancelled) {
+      this.writeRpc({
+        id: message.id,
+        result: { _meta: null, action: 'cancel', content: null },
+      });
+      return;
+    }
+
+    const result = readInterventionResult(outcome.answer.result);
+    const content = Object.fromEntries(
+      fields.flatMap(({ name, question, schema: fieldSchema, schemaOptions }) => {
+        const answer = getQuestionAnswer(result, question.question);
+        return answer.length > 0
+          ? [[name, coerceSchemaAnswer(answer, fieldSchema, schemaOptions)]]
+          : [];
+      }),
+    );
+    this.writeRpc({
+      id: message.id,
+      result: { _meta: null, action: 'accept', content },
+    });
+  }
+
+  private async requestIntervention(
+    requestId: number | string,
+    request: CodexAppServerInterventionRequest,
+  ): Promise<{ active: boolean; answer: CodexAppServerInterventionAnswer }> {
+    const key = String(requestId);
+    const controller = new AbortController();
+    this.pendingServerRequests.set(key, controller);
+    await this.emitSynthetic({
+      item: {
+        arguments: request.arguments,
+        id: request.toolCallId,
+        status: 'in_progress',
+        type: 'askUserQuestion',
+      },
+      type: 'item.started',
+    });
+
+    const answer = this.options.onIntervention
+      ? await this.options.onIntervention(request, controller.signal)
+      : { cancelled: true };
+    const active = this.pendingServerRequests.get(key) === controller;
+    if (!active) return { active: false, answer };
+
+    this.pendingServerRequests.delete(key);
+    await this.emitSynthetic({
+      item: {
+        arguments: request.arguments,
+        id: request.toolCallId,
+        output: answer.cancelled ? 'User input cancelled.' : 'User input submitted.',
+        status: answer.cancelled ? 'cancelled' : 'completed',
+        type: 'askUserQuestion',
+      },
+      type: 'item.completed',
+    });
+    return { active: true, answer };
+  }
+
+  private async emitAppServerItem(
+    rawItem: CodexExecItem,
+    eventType: 'item.completed' | 'item.started',
+  ): Promise<void> {
+    const registeredSubagentThreadIds = this.subagentRouter.captureParentItem(rawItem, eventType);
+    const flushRegisteredSubagents = () =>
+      this.subagentRouter.flushPending(registeredSubagentThreadIds);
+    const normalized = normalizeCodexAppServerItem(rawItem);
+    if (normalized.disposition === 'unknown') {
+      await this.reportDiagnostic(
+        `unknown-item:${normalized.itemType}`,
+        `Unsupported Codex app-server item type: ${normalized.itemType}`,
+      );
+      await flushRegisteredSubagents();
+      return;
+    }
+    if (normalized.disposition === 'acknowledged') {
+      if (normalized.itemType !== 'subAgentActivity') {
+        await this.reportDiagnostic(
+          `acknowledged-item:${normalized.itemType}`,
+          `Codex app-server item acknowledged without an exec JSON equivalent: ${normalized.itemType}`,
+        );
+      }
+      await flushRegisteredSubagents();
+      return;
+    }
+
+    const { item } = normalized;
+    if (eventType === 'item.completed' && item.id) {
+      if (this.completedItemIds.has(item.id)) {
+        await flushRegisteredSubagents();
+        return;
+      }
+      this.completedItemIds.add(item.id);
+    }
+    if (eventType === 'item.started' && item.type === 'file_change' && item.id) {
+      this.activeFileChangeItemId = item.id;
+    }
+
+    await this.emitSynthetic({ item, type: eventType });
+    if (eventType === 'item.completed' && item.id === this.activeFileChangeItemId) {
+      this.activeFileChangeItemId = undefined;
+    }
+    await flushRegisteredSubagents();
+  }
+
+  private async reportDiagnostic(key: string, message: string): Promise<void> {
+    if (this.reportedDiagnostics.has(key)) return;
+    this.reportedDiagnostics.add(key);
+    await this.options.onStderr(`[codex-app-server] ${message}\n`);
+  }
+
+  private resolveServerRequest(requestId: unknown): void {
+    if (typeof requestId !== 'number' && typeof requestId !== 'string') return;
+    const controller = this.pendingServerRequests.get(String(requestId));
+    if (!controller) return;
+
+    this.pendingServerRequests.delete(String(requestId));
+    controller.abort();
+  }
+
+  private abortServerRequests(): void {
+    for (const [, controller] of this.pendingServerRequests) controller.abort();
+    this.pendingServerRequests.clear();
+  }
+
+  private writeUnsupportedRequest(id: number | string, message: string): void {
+    this.writeRpc({ error: { code: APP_SERVER_UNSUPPORTED_REQUEST_CODE, message }, id });
   }
 
   private request<T = unknown>(method: string, params?: unknown): Promise<T> {
@@ -870,6 +1385,7 @@ export class CodexAppServerSession {
     this.fatalError ??= error;
     this.rejectTurn?.(error);
     this.rejectPendingRequests(error);
+    this.abortServerRequests();
   }
 
   private rejectPendingRequests(error: Error): void {

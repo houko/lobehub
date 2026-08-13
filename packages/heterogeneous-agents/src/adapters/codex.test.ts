@@ -93,6 +93,75 @@ describe('CodexAdapter', () => {
     ]);
   });
 
+  it('streams reasoning summaries without duplicating the completed reasoning item', () => {
+    const adapter = new CodexAdapter();
+    adapter.adapt({ type: 'turn.started' });
+    adapter.adapt({ item: { id: 'reasoning-1', type: 'reasoning' }, type: 'item.started' });
+
+    const first = adapter.adapt({
+      delta: 'Inspecting',
+      item_id: 'reasoning-1',
+      type: 'item.reasoning.delta',
+    });
+    const second = adapter.adapt({
+      delta: '\n\nDeciding',
+      item_id: 'reasoning-1',
+      type: 'item.reasoning.delta',
+    });
+    const completed = adapter.adapt({
+      item: { id: 'reasoning-1', text: 'Inspecting\n\nDeciding', type: 'reasoning' },
+      type: 'item.completed',
+    });
+
+    expect([...first, ...second].map((event) => event.data?.reasoning).filter(Boolean)).toEqual([
+      'Inspecting',
+      '\n\nDeciding',
+    ]);
+    expect(completed).toEqual([]);
+  });
+
+  it('streams plan snapshots and lets the completed plan replace non-authoritative deltas', () => {
+    const adapter = new CodexAdapter();
+    adapter.adapt({ type: 'turn.started' });
+
+    const first = adapter.adapt({
+      delta: '# Draft',
+      item_id: 'plan-1',
+      type: 'item.plan.delta',
+    });
+    const second = adapter.adapt({
+      delta: ' plan',
+      item_id: 'plan-1',
+      type: 'item.plan.delta',
+    });
+    const completed = adapter.adapt({
+      item: { id: 'plan-1', text: '# Authoritative plan', type: 'plan' },
+      type: 'item.completed',
+    });
+
+    expect([...first, ...second, ...completed].map((event) => event.data?.content)).toEqual([
+      '# Draft',
+      '# Draft plan',
+      '# Authoritative plan',
+    ]);
+    expect([...first, ...second, ...completed]).toMatchObject([
+      { data: { snapshotMode: 'replace', snapshotSeq: 1 } },
+      { data: { snapshotMode: 'replace', snapshotSeq: 2 } },
+      { data: { snapshotMode: 'replace', snapshotSeq: 3 } },
+    ]);
+  });
+
+  it('maps retry notifications to a non-terminal stream_retry event', () => {
+    const adapter = new CodexAdapter();
+
+    expect(adapter.adapt({ message: 'connection reset', type: 'stream.retry' })).toMatchObject([
+      {
+        data: { message: 'connection reset', provider: 'codex' },
+        type: 'stream_retry',
+      },
+    ]);
+  });
+
   it('streams cumulative command output snapshots before the final result', () => {
     const adapter = new CodexAdapter();
     adapter.adapt({ type: 'turn.started' });
@@ -146,6 +215,85 @@ describe('CodexAdapter', () => {
     });
     expect(truncated[0].data.pluginState.output).toContain('[Output truncated:');
     expect(afterTruncation).toEqual([]);
+  });
+
+  it('preserves terminal interactions and MCP progress as running tool snapshots', () => {
+    const adapter = new CodexAdapter();
+    adapter.adapt({ type: 'turn.started' });
+    adapter.adapt({
+      item: { command: 'cat', id: 'command-1', type: 'command_execution' },
+      type: 'item.started',
+    });
+    adapter.adapt({
+      item: { arguments: {}, id: 'mcp-1', server: 'apps', tool: 'read', type: 'mcp_tool_call' },
+      type: 'item.started',
+    });
+
+    const terminal = adapter.adapt({
+      item_id: 'command-1',
+      process_id: 'process-1',
+      stdin: 'yes\n',
+      type: 'item.command_execution.terminal_interaction',
+    });
+    const progress = adapter.adapt({
+      item_id: 'mcp-1',
+      message: 'Loading issue',
+      type: 'item.mcp_tool_call.progress',
+    });
+    const commandCompleted = adapter.adapt({
+      item: {
+        aggregated_output: 'done',
+        exit_code: 0,
+        id: 'command-1',
+        status: 'completed',
+        type: 'command_execution',
+      },
+      type: 'item.completed',
+    });
+    const mcpCompleted = adapter.adapt({
+      item: {
+        arguments: {},
+        id: 'mcp-1',
+        result: { content: [{ text: 'loaded' }] },
+        server: 'apps',
+        status: 'completed',
+        tool: 'read',
+        type: 'mcp_tool_call',
+      },
+      type: 'item.completed',
+    });
+
+    expect(terminal[0]).toMatchObject({
+      data: {
+        pluginState: {
+          terminalInteractions: [{ processId: 'process-1', stdin: 'yes\n' }],
+        },
+        toolCallId: 'command-1',
+      },
+      type: 'stream_chunk',
+    });
+    expect(progress[0]).toMatchObject({
+      data: {
+        pluginState: { progress: 'Loading issue', progressMessages: ['Loading issue'] },
+        toolCallId: 'mcp-1',
+      },
+      type: 'stream_chunk',
+    });
+    expect(commandCompleted.find(({ type }) => type === 'tool_result')).toMatchObject({
+      data: {
+        pluginState: {
+          terminalInteractions: [{ processId: 'process-1', stdin: 'yes\n' }],
+        },
+      },
+    });
+    expect(mcpCompleted.find(({ type }) => type === 'tool_result')).toMatchObject({
+      data: {
+        pluginState: {
+          progress: 'Loading issue',
+          progressMessages: ['Loading issue'],
+        },
+      },
+    });
   });
 
   it('emits model metadata when the host configures the Codex session', () => {

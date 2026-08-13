@@ -104,9 +104,12 @@ describe('customInteractionHandlers', () => {
     });
   });
 
-  it('routes Qoder tools through the heterogeneous custom interaction flow', () => {
-    expect(isCustomInteractionIdentifier('qoder', 'askUserQuestion')).toBe(true);
-  });
+  it.each(['codex', 'qoder'])(
+    'routes %s tools through the heterogeneous custom interaction flow',
+    (identifier) => {
+      expect(isCustomInteractionIdentifier(identifier, 'askUserQuestion')).toBe(true);
+    },
+  );
 
   it('persists skipped marketplace picks from the original tool arguments', async () => {
     await recordCustomInteractionResolution(

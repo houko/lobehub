@@ -54,6 +54,28 @@ describe('AskUserBridge', () => {
       drain.stop();
     });
 
+    it('uses caller-supplied tool identity for non-Claude interventions', async () => {
+      const bridge = new AskUserBridge('op-codex');
+      const drain = drainEvents(bridge);
+      const pending = bridge.pending({
+        apiName: 'askUserQuestion',
+        arguments: { questions: [] },
+        identifier: 'codex',
+        toolCallId: 'codex-question-1',
+      });
+
+      const event = await drain.firstEvent;
+      expect(event.data).toMatchObject({
+        apiName: 'askUserQuestion',
+        identifier: 'codex',
+        toolCallId: 'codex-question-1',
+      });
+
+      bridge.resolve('codex-question-1', { result: {} });
+      await expect(pending).resolves.toEqual({ result: {} });
+      drain.stop();
+    });
+
     it('rejects pending() when the same toolCallId is already in flight', async () => {
       const bridge = new AskUserBridge('op-1');
       const drain = drainEvents(bridge);

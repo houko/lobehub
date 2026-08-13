@@ -19,9 +19,11 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 interface RpcMessage {
+  error?: unknown;
   id?: number | string;
   method?: string;
   params?: Record<string, unknown>;
+  result?: unknown;
 }
 
 const createAppServerProcess = ({ autoComplete = true, requestApproval = false } = {}) => {
@@ -469,8 +471,770 @@ describe('CodexAppServerSession', () => {
         threadId: 'thread-existing',
       },
     });
-    expect(requests).toContainEqual({ id: 'approval-1', result: { decision: 'cancel' } });
+    expect(requests).toContainEqual({ id: 'approval-1', result: { decision: 'decline' } });
     expect(onSessionId).toHaveBeenCalledWith('thread-1');
+  });
+
+  it('maps reasoning, plan, progress, patch, retry, diagnostics, and final-item fallbacks', async () => {
+    const { child, send } = createAppServerProcess({ autoComplete: false });
+    spawnMock.mockReturnValue(child);
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const events: any[] = [];
+    const statuses: any[] = [];
+    const onStderr = vi.fn();
+    const session = new CodexAppServerSession({
+      args: [],
+      clientVersion: '1.0.0',
+      commandPath: 'codex',
+      cwd: '/workspace',
+      env: process.env,
+      input: [{ text: 'hello', text_elements: [], type: 'text' }],
+      onEvents: (batch) => {
+        events.push(...batch);
+      },
+      onRawMessage: vi.fn(),
+      onRuntimeStatus: (status) => statuses.push(status),
+      onSessionId: vi.fn(),
+      onStderr,
+      operationId: 'operation-1',
+      sessionId: 'session-1',
+    });
+
+    const run = session.run();
+    await vi.waitFor(() => expect(statuses.some(({ state }) => state === 'running')).toBe(true));
+    const scope = { threadId: 'thread-1', turnId: 'turn-1' };
+    send({
+      method: 'item/started',
+      params: {
+        ...scope,
+        item: { content: [], id: 'reasoning-1', summary: [], type: 'reasoning' },
+      },
+    });
+    send({
+      method: 'item/reasoning/summaryTextDelta',
+      params: { ...scope, delta: 'Inspecting', itemId: 'reasoning-1', summaryIndex: 0 },
+    });
+    send({
+      method: 'item/reasoning/summaryPartAdded',
+      params: { ...scope, itemId: 'reasoning-1', summaryIndex: 1 },
+    });
+    send({
+      method: 'item/reasoning/summaryTextDelta',
+      params: { ...scope, delta: 'Deciding', itemId: 'reasoning-1', summaryIndex: 1 },
+    });
+    send({
+      method: 'item/reasoning/textDelta',
+      params: { ...scope, contentIndex: 0, delta: 'private raw', itemId: 'reasoning-1' },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        ...scope,
+        item: {
+          content: ['private raw'],
+          id: 'reasoning-1',
+          summary: ['Inspecting', 'Deciding'],
+          type: 'reasoning',
+        },
+      },
+    });
+    send({
+      method: 'item/plan/delta',
+      params: { ...scope, delta: '# ', itemId: 'plan-1' },
+    });
+    send({
+      method: 'item/plan/delta',
+      params: { ...scope, delta: 'Plan', itemId: 'plan-1' },
+    });
+    send({
+      method: 'item/completed',
+      params: { ...scope, item: { id: 'plan-1', text: '# Plan', type: 'plan' } },
+    });
+    send({
+      method: 'item/started',
+      params: {
+        ...scope,
+        item: {
+          aggregatedOutput: null,
+          command: 'cat',
+          commandActions: [],
+          cwd: '/workspace',
+          durationMs: null,
+          exitCode: null,
+          id: 'command-1',
+          pluginId: null,
+          processId: 'process-1',
+          scriptPath: null,
+          source: 'agent',
+          status: 'inProgress',
+          type: 'commandExecution',
+        },
+      },
+    });
+    send({
+      method: 'item/commandExecution/terminalInteraction',
+      params: { ...scope, itemId: 'command-1', processId: 'process-1', stdin: 'yes\n' },
+    });
+    send({
+      method: 'item/started',
+      params: {
+        ...scope,
+        item: {
+          appContext: null,
+          arguments: {},
+          durationMs: null,
+          error: null,
+          id: 'mcp-1',
+          pluginId: null,
+          readOnlyHint: true,
+          result: null,
+          server: 'apps',
+          status: 'inProgress',
+          tool: 'read',
+          type: 'mcpToolCall',
+        },
+      },
+    });
+    send({
+      method: 'item/mcpToolCall/progress',
+      params: { ...scope, itemId: 'mcp-1', message: 'Loading issue' },
+    });
+    send({
+      method: 'item/started',
+      params: {
+        ...scope,
+        item: { changes: [], id: 'file-1', status: 'inProgress', type: 'fileChange' },
+      },
+    });
+    send({
+      method: 'item/fileChange/patchUpdated',
+      params: {
+        ...scope,
+        changes: [{ diff: '+new', kind: { type: 'add' }, path: 'new.ts' }],
+        itemId: 'file-1',
+      },
+    });
+    send({
+      method: 'error',
+      params: { ...scope, error: { message: 'connection reset' }, willRetry: true },
+    });
+    send({ method: 'warning', params: { ...scope, message: 'Using fallback config' } });
+    send({
+      method: 'item/completed',
+      params: {
+        ...scope,
+        item: { clientId: 'desktop', content: [], id: 'user-1', type: 'userMessage' },
+      },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        ...scope,
+        item: { fragments: [], id: 'hook-1', type: 'hookPrompt' },
+      },
+    });
+    send({ method: 'account/updated', params: { account: null } });
+    send({ method: 'future/notification', params: scope });
+    send({
+      method: 'item/completed',
+      params: { ...scope, item: { id: 'future-1', type: 'futureItem' } },
+    });
+    send({
+      method: 'item/started',
+      params: {
+        ...scope,
+        item: {
+          agentsStates: {},
+          id: 'spawn-1',
+          model: 'gpt-5.5-codex',
+          prompt: 'Inspect the child task',
+          reasoningEffort: 'medium',
+          receiverThreadIds: [],
+          senderThreadId: 'thread-1',
+          status: 'inProgress',
+          tool: 'spawnAgent',
+          type: 'collabAgentToolCall',
+        },
+      },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        ...scope,
+        item: {
+          agentPath: '/root/worker',
+          agentThreadId: 'child-thread-1',
+          id: 'spawn-1',
+          kind: 'started',
+          type: 'subAgentActivity',
+        },
+      },
+    });
+    send({
+      method: 'turn/started',
+      params: {
+        threadId: 'child-thread-1',
+        turn: { id: 'child-turn-1', status: 'inProgress' },
+      },
+    });
+    send({
+      method: 'item/agentMessage/delta',
+      params: {
+        delta: 'Child result',
+        itemId: 'child-message-1',
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        item: {
+          id: 'child-message-1',
+          memoryCitation: null,
+          phase: 'final_answer',
+          text: 'Child result',
+          type: 'agentMessage',
+        },
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'model/rerouted',
+      params: {
+        fromModel: 'gpt-5.5-codex',
+        reason: 'highRiskCyberActivity',
+        threadId: 'child-thread-1',
+        toModel: 'gpt-5.5-codex-safe',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'turn/plan/updated',
+      params: {
+        explanation: null,
+        plan: [{ status: 'inProgress', step: 'Inspect child files' }],
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'item/started',
+      params: {
+        item: {
+          changes: [],
+          id: 'child-file-1',
+          status: 'inProgress',
+          type: 'fileChange',
+        },
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'turn/diff/updated',
+      params: {
+        diff: '--- a/child.ts\n+++ b/child.ts\n',
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'item/fileChange/outputDelta',
+      params: {
+        delta: '+legacy child delta',
+        itemId: 'child-file-1',
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        item: {
+          changes: [{ diff: '+done', kind: { type: 'update' }, path: 'child.ts' }],
+          id: 'child-file-1',
+          status: 'completed',
+          type: 'fileChange',
+        },
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'child-thread-1',
+        tokenUsage: { total: { inputTokens: 4, outputTokens: 2, totalTokens: 6 } },
+        turnId: 'child-turn-1',
+      },
+    });
+    send({
+      method: 'turn/completed',
+      params: {
+        threadId: 'child-thread-1',
+        turn: { id: 'child-turn-1', status: 'completed' },
+      },
+    });
+    send({
+      method: 'turn/started',
+      params: {
+        threadId: 'child-thread-1',
+        turn: { id: 'child-turn-2', status: 'inProgress' },
+      },
+    });
+    send({
+      method: 'item/agentMessage/delta',
+      params: {
+        delta: 'Follow-up',
+        itemId: 'child-message-2',
+        threadId: 'child-thread-1',
+        turnId: 'child-turn-2',
+      },
+    });
+    send({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'child-thread-1',
+        tokenUsage: { total: { inputTokens: 7, outputTokens: 3, totalTokens: 10 } },
+        turnId: 'child-turn-2',
+      },
+    });
+    send({
+      method: 'turn/completed',
+      params: {
+        threadId: 'child-thread-1',
+        turn: { id: 'child-turn-2', status: 'completed' },
+      },
+    });
+    send({
+      method: 'item/completed',
+      params: {
+        ...scope,
+        item: {
+          agentsStates: { 'child-thread-1': { message: null, status: 'completed' } },
+          id: 'spawn-1',
+          model: 'gpt-5.5-codex',
+          prompt: 'Inspect the child task',
+          reasoningEffort: 'medium',
+          receiverThreadIds: ['child-thread-1'],
+          senderThreadId: 'thread-1',
+          status: 'completed',
+          tool: 'spawnAgent',
+          type: 'collabAgentToolCall',
+        },
+      },
+    });
+    send({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-1',
+        turn: {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'final-message',
+              memoryCitation: null,
+              phase: 'final_answer',
+              text: 'Fallback final',
+              type: 'agentMessage',
+            },
+          ],
+          status: 'completed',
+        },
+      },
+    });
+    await run;
+
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === 'stream_chunk' &&
+            event.data?.chunkType === 'reasoning' &&
+            !event.data?.subagent,
+        )
+        .map((event) => event.data.reasoning),
+    ).toEqual(['Inspecting', '\n\n', 'Deciding']);
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === 'stream_chunk' &&
+            event.data?.chunkType === 'text' &&
+            !event.data?.subagent,
+        )
+        .map((event) => event.data.content),
+    ).toEqual(['# ', '# Plan', 'Fallback final']);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          chunkType: 'text',
+          content: 'Child result',
+          subagent: {
+            parentToolCallId: 'spawn-1',
+            spawnMetadata: {
+              description: 'worker',
+              prompt: 'Inspect the child task',
+              subagentType: 'gpt-5.5-codex',
+            },
+            subagentMessageId: 'child-turn-1',
+          },
+        }),
+        type: 'stream_chunk',
+      }),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.data?.subagent?.parentToolCallId === 'spawn-1' &&
+          event.data?.pluginState?.changes?.[0]?.diffText === '--- a/child.ts\n+++ b/child.ts\n',
+      ),
+    ).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.data?.subagent?.parentToolCallId === 'spawn-1' &&
+          event.data?.pluginState?.changes?.[0]?.diffText === '+legacy child delta',
+      ),
+    ).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          model: 'gpt-5.5-codex-safe',
+          subagent: expect.objectContaining({ parentToolCallId: 'spawn-1' }),
+        }),
+        type: 'step_complete',
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          subagent: expect.objectContaining({ parentToolCallId: 'spawn-1' }),
+          toolCallId: 'turn-plan-child-turn-1',
+        }),
+        type: 'tool_result',
+      }),
+    );
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === 'step_complete' &&
+            event.data?.subagent?.parentToolCallId === 'spawn-1' &&
+            event.data?.usage,
+        )
+        .map((event) => event.data.usage?.totalTokens),
+    ).toEqual([6, 4]);
+    const parentSpawnResultIndex = events.findIndex(
+      (event) => event.type === 'tool_result' && event.data?.toolCallId === 'spawn-1',
+    );
+    const childChunkIndex = events.findIndex(
+      (event) =>
+        event.type === 'stream_chunk' && event.data?.subagent?.parentToolCallId === 'spawn-1',
+    );
+    expect(parentSpawnResultIndex).toBeGreaterThan(-1);
+    expect(childChunkIndex).toBeGreaterThan(parentSpawnResultIndex);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({ message: 'connection reset' }),
+        type: 'stream_retry',
+      }),
+    );
+    expect(
+      events.some(
+        (event) => event.data?.pluginState?.terminalInteractions?.[0]?.processId === 'process-1',
+      ),
+    ).toBe(true);
+    expect(events.some((event) => event.data?.pluginState?.progress === 'Loading issue')).toBe(
+      true,
+    );
+    expect(events.some((event) => event.data?.pluginState?.changes?.[0]?.path === 'new.ts')).toBe(
+      true,
+    );
+    expect(onStderr).toHaveBeenCalledWith(expect.stringContaining('raw reasoning is omitted'));
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('warning: Using fallback config'),
+    );
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('item acknowledged without an exec JSON equivalent: userMessage'),
+    );
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('item acknowledged without an exec JSON equivalent: hookPrompt'),
+    );
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('acknowledged without an exec JSON equivalent: account/updated'),
+    );
+    expect(onStderr).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown Codex app-server notification: future/notification'),
+    );
+    expect(onStderr).toHaveBeenCalledWith(expect.stringContaining('futureItem'));
+  });
+
+  it('round-trips user-input and MCP form server requests through interventions', async () => {
+    const { child, requests, send } = createAppServerProcess({ autoComplete: false });
+    spawnMock.mockReturnValue(child);
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const statuses: any[] = [];
+    const onIntervention = vi.fn(async ({ arguments: { questions } }) => ({
+      result:
+        questions[0].question === 'Choose scope'
+          ? { 'Choose scope': 'All' }
+          : {
+              'Choose deployment scope': 'All files',
+              'Enable cache': 'true',
+              'Name': 'Lobe',
+              'Pick labels': ['Source', 'Tests'],
+            },
+    }));
+    const session = new CodexAppServerSession({
+      args: [],
+      clientVersion: '1.0.0',
+      commandPath: 'codex',
+      cwd: '/workspace',
+      env: process.env,
+      input: [{ text: 'hello', text_elements: [], type: 'text' }],
+      onEvents: vi.fn(),
+      onIntervention,
+      onRawMessage: vi.fn(),
+      onRuntimeStatus: (status) => statuses.push(status),
+      onSessionId: vi.fn(),
+      onStderr: vi.fn(),
+      operationId: 'operation-1',
+      sessionId: 'session-1',
+    });
+
+    const run = session.run();
+    await vi.waitFor(() => expect(statuses.some(({ state }) => state === 'running')).toBe(true));
+    send({
+      id: 'input-1',
+      method: 'item/tool/requestUserInput',
+      params: {
+        autoResolutionMs: null,
+        isBlocking: true,
+        itemId: 'ask-1',
+        questions: [
+          {
+            header: 'Scope',
+            id: 'scope',
+            isOther: true,
+            isSecret: false,
+            options: [
+              { description: 'Everything', label: 'All' },
+              { description: 'Only this file', label: 'File' },
+            ],
+            question: 'Choose scope',
+          },
+        ],
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      },
+    });
+    await vi.waitFor(() =>
+      expect(requests).toContainEqual({
+        id: 'input-1',
+        result: { answers: { scope: { answers: ['All'] } } },
+      }),
+    );
+    send({
+      id: 'elicitation-1',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        _meta: null,
+        message: 'Configure connector',
+        mode: 'form',
+        requestedSchema: {
+          properties: {
+            cache: { description: 'Enable cache', type: 'boolean' },
+            name: { title: 'Name', type: 'string' },
+            scope: {
+              description: 'Choose deployment scope',
+              oneOf: [
+                { const: 'all', title: 'All files' },
+                { const: 'changed', title: 'Changed files' },
+              ],
+              type: 'string',
+            },
+            tags: {
+              description: 'Pick labels',
+              items: {
+                anyOf: [
+                  { const: 'src', title: 'Source' },
+                  { const: 'test', title: 'Tests' },
+                ],
+                type: 'string',
+              },
+              type: 'array',
+            },
+          },
+          required: ['name'],
+          type: 'object',
+        },
+        serverName: 'connector',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      },
+    });
+    await vi.waitFor(() =>
+      expect(requests).toContainEqual({
+        id: 'elicitation-1',
+        result: {
+          _meta: null,
+          action: 'accept',
+          content: { cache: true, name: 'Lobe', scope: 'all', tags: ['src', 'test'] },
+        },
+      }),
+    );
+    send({
+      id: 'permissions-1',
+      method: 'item/permissions/requestApproval',
+      params: { itemId: 'permissions', threadId: 'thread-1', turnId: 'turn-1' },
+    });
+    send({
+      id: 'dynamic-1',
+      method: 'item/tool/call',
+      params: { arguments: {}, callId: 'call-1', threadId: 'thread-1', tool: 'missing' },
+    });
+    send({ id: 'current-time-1', method: 'currentTime/read', params: {} });
+    send({
+      id: 'legacy-patch-1',
+      method: 'applyPatchApproval',
+      params: { callId: 'patch-1', conversationId: 'thread-1' },
+    });
+    send({
+      id: 'legacy-command-1',
+      method: 'execCommandApproval',
+      params: { callId: 'command-1', conversationId: 'thread-1' },
+    });
+    send({
+      id: 'auth-refresh-1',
+      method: 'account/chatgptAuthTokens/refresh',
+      params: { previousAccountId: null },
+    });
+    send({ id: 'attestation-1', method: 'attestation/generate', params: {} });
+    await vi.waitFor(() => {
+      expect(requests).toContainEqual({
+        error: {
+          code: -32_000,
+          message: 'Permission approval is unavailable in this client.',
+        },
+        id: 'permissions-1',
+      });
+      expect(requests).toContainEqual({
+        id: 'dynamic-1',
+        result: {
+          contentItems: [
+            { text: "Dynamic tool 'missing' is not registered by LobeHub.", type: 'inputText' },
+          ],
+          success: false,
+        },
+      });
+      expect(requests).toContainEqual({
+        id: 'current-time-1',
+        result: { currentTimeAt: expect.any(Number) },
+      });
+      expect(requests).toContainEqual({
+        id: 'legacy-patch-1',
+        result: {
+          decision: { denied: { rejection: 'Approval UI is unavailable in this client.' } },
+        },
+      });
+      expect(requests).toContainEqual({
+        id: 'legacy-command-1',
+        result: {
+          decision: { denied: { rejection: 'Approval UI is unavailable in this client.' } },
+        },
+      });
+      expect(requests).toContainEqual({
+        error: {
+          code: -32_000,
+          message:
+            'Codex app-server request is unavailable in this client: account/chatgptAuthTokens/refresh',
+        },
+        id: 'auth-refresh-1',
+      });
+      expect(requests).toContainEqual({
+        error: {
+          code: -32_000,
+          message: 'Codex app-server request is unavailable in this client: attestation/generate',
+        },
+        id: 'attestation-1',
+      });
+    });
+    send({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    await run;
+
+    expect(onIntervention).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a pending child-thread intervention when serverRequest/resolved clears it elsewhere', async () => {
+    const { child, requests, send } = createAppServerProcess({ autoComplete: false });
+    spawnMock.mockReturnValue(child);
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const statuses: any[] = [];
+    const onIntervention = vi.fn(
+      (_request, signal: AbortSignal) =>
+        new Promise<{ cancelled: boolean }>((resolve) => {
+          signal.addEventListener('abort', () => resolve({ cancelled: true }), { once: true });
+        }),
+    );
+    const session = new CodexAppServerSession({
+      args: [],
+      clientVersion: '1.0.0',
+      commandPath: 'codex',
+      cwd: '/workspace',
+      env: process.env,
+      input: [{ text: 'hello', text_elements: [], type: 'text' }],
+      onEvents: vi.fn(),
+      onIntervention,
+      onRawMessage: vi.fn(),
+      onRuntimeStatus: (status) => statuses.push(status),
+      onSessionId: vi.fn(),
+      onStderr: vi.fn(),
+      operationId: 'operation-1',
+      sessionId: 'session-1',
+    });
+
+    const run = session.run();
+    await vi.waitFor(() => expect(statuses.some(({ state }) => state === 'running')).toBe(true));
+    send({
+      id: 77,
+      method: 'item/tool/requestUserInput',
+      params: {
+        itemId: 'ask-77',
+        questions: [
+          {
+            header: 'Scope',
+            id: 'scope',
+            isOther: false,
+            isSecret: false,
+            options: null,
+            question: 'Choose scope',
+          },
+        ],
+        threadId: 'child-thread-77',
+        turnId: 'turn-1',
+      },
+    });
+    await vi.waitFor(() => expect(onIntervention).toHaveBeenCalledOnce());
+    send({
+      method: 'serverRequest/resolved',
+      params: { requestId: 77, threadId: 'child-thread-77' },
+    });
+    await vi.waitFor(() =>
+      expect(onIntervention.mock.results[0].value).resolves.toEqual({ cancelled: true }),
+    );
+    expect(requests.some(({ id, result }) => id === 77 && result !== undefined)).toBe(false);
+
+    send({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    await run;
   });
 
   it('ignores terminal notifications for another thread', async () => {

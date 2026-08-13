@@ -255,6 +255,7 @@ export const registerBuiltinToolSurfaces = (): void => {
     [PI_IDENTIFIER]: heterogeneousCliRenders,
     codex: {
       ...CodexRenders,
+      askUserQuestion: UserInteractionRenders.askUserQuestion,
       command_execution: RunCommandRender as BuiltinRender,
     },
     [GithubIdentifier]: GithubRenders,
@@ -311,7 +312,10 @@ export const registerBuiltinToolSurfaces = (): void => {
     [WebOnboardingManifest.identifier]: WebOnboardingInspectors as Record<string, BuiltinInspector>,
     [OPENCODE_IDENTIFIER]: heterogeneousCliInspectors,
     [PI_IDENTIFIER]: heterogeneousCliInspectors,
-    codex: CodexInspectors,
+    codex: {
+      ...CodexInspectors,
+      askUserQuestion: UserInteractionInspectors.askUserQuestion,
+    },
     [GithubIdentifier]: GithubInspectors,
     [LinearIdentifier]: LinearInspectors,
     [TwitterIdentifier]: TwitterInspectors,
@@ -354,6 +358,7 @@ export const registerBuiltinToolSurfaces = (): void => {
     >,
     [ClaudeCodeIdentifier]: ClaudeCodeInterventions as Record<string, BuiltinIntervention>,
     [QODER_IDENTIFIER]: ClaudeCodeInterventions as Record<string, BuiltinIntervention>,
+    codex: UserInteractionInterventions as Record<string, BuiltinIntervention>,
     [CloudSandboxManifest.identifier]: CloudSandboxInterventions as Record<
       string,
       BuiltinIntervention
