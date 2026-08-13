@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   AmpAdapter,
   ClaudeCodeAdapter,
+  CodeBuddyAdapter,
   CodexAdapter,
+  CursorAdapter,
   OpenCodeAdapter,
   PiAdapter,
   QoderAdapter,
@@ -23,9 +25,17 @@ describe('registry', () => {
       expect(adapter).toBeInstanceOf(ClaudeCodeAdapter);
     });
 
+    it('creates a CodeBuddyAdapter for "codebuddy"', () => {
+      expect(createAdapter('codebuddy')).toBeInstanceOf(CodeBuddyAdapter);
+    });
+
     it('creates a CodexAdapter for "codex"', () => {
       const adapter = createAdapter('codex');
       expect(adapter).toBeInstanceOf(CodexAdapter);
+    });
+
+    it('creates a CursorAdapter for "cursor"', () => {
+      expect(createAdapter('cursor')).toBeInstanceOf(CursorAdapter);
     });
 
     it('creates an OpenCodeAdapter for "opencode"', () => {

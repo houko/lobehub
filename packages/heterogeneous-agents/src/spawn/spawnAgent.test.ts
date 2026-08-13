@@ -171,6 +171,41 @@ describe('spawnAgent', () => {
     expect(spawnCalls).toHaveLength(0);
   });
 
+  it('spawns Cursor with positional prompt, resume, native args, and no stdin payload', async () => {
+    const fake = createFakeProc();
+    nextFakeProc = fake.proc;
+    const { spawnAgent } = await import('./spawnAgent');
+    await spawnAgent({
+      agentType: 'cursor',
+      extraArgs: ['--model', 'sonnet', '--mode', 'plan'],
+      operationId: 'op-cursor',
+      prompt: 'do a thing',
+      resumeSessionId: 'cursor-session',
+    });
+
+    expect(spawnCalls[0]).toMatchObject({
+      args: [
+        '-p',
+        '--force',
+        '--trust',
+        '--output-format',
+        'stream-json',
+        '--stream-partial-output',
+        '--resume',
+        'cursor-session',
+        '--model',
+        'sonnet',
+        '--mode',
+        'plan',
+        '--',
+        'do a thing',
+      ],
+      command: 'agent',
+    });
+    expect(fake.stdinWrites).toEqual([]);
+    expect(fake.proc.stdin.end).toHaveBeenCalledOnce();
+  });
+
   it('passes --include-partial-messages only when includePartialMessages=true', async () => {
     nextFakeProc = createFakeProc().proc;
     const { spawnAgent } = await import('./spawnAgent');
@@ -240,6 +275,33 @@ describe('spawnAgent', () => {
       parent_tool_use_id: null,
       type: 'user',
     });
+  });
+
+  it('spawns CodeBuddy with its stream-json protocol, resume id, and stable headless env', async () => {
+    nextFakeProc = createFakeProc().proc;
+    const { spawnAgent } = await import('./spawnAgent');
+    await spawnAgent({
+      agentType: 'codebuddy',
+      operationId: 'op-codebuddy',
+      prompt: 'continue',
+      resumeSessionId: 'cb-prev-123',
+    });
+
+    const { args, command, options } = spawnCalls[0];
+    expect(command).toBe('codebuddy');
+    expect(args).toContain('-p');
+    expect(args).toContain('--input-format');
+    expect(args).toContain('--output-format');
+    expect(args).toContain('--permission-mode');
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('AskUserQuestion,Monitor');
+    expect(args[args.indexOf('--resume') + 1]).toBe('cb-prev-123');
+    expect(args).not.toContain('continue');
+    expect(JSON.parse((nextFakeProc as any).stdin.write.mock.calls[0][0].trim())).toMatchObject({
+      message: { content: [{ text: 'continue', type: 'text' }], role: 'user' },
+      type: 'user',
+    });
+    expect(options.env.CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
   });
 
   it('spawns AMP with its private headless stream-json protocol', async () => {

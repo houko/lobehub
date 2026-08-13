@@ -235,7 +235,9 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
     const showCliInstallGuide =
       (provider.type === 'amp' ||
         provider.type === 'claude-code' ||
+        provider.type === 'codebuddy' ||
         provider.type === 'codex' ||
+        provider.type === 'cursor' ||
         provider.type === 'opencode' ||
         provider.type === 'pi' ||
         provider.type === 'qoder') &&

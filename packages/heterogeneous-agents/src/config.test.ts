@@ -15,7 +15,9 @@ describe('heterogeneous agent config', () => {
     expect(HETEROGENEOUS_AGENT_CONFIGS.map((config) => config.type)).toEqual([
       'amp',
       'claude-code',
+      'codebuddy',
       'codex',
+      'cursor',
       'opencode',
       'pi',
       'qoder',
@@ -36,6 +38,17 @@ describe('heterogeneous agent config', () => {
       defaultCommand: 'codex',
       title: 'Codex',
       type: 'codex',
+    });
+    expect(getHeterogeneousAgentConfig('codebuddy')).toMatchObject({
+      defaultCommand: 'codebuddy',
+      title: 'CodeBuddy',
+      type: 'codebuddy',
+    });
+    expect(getHeterogeneousAgentConfig('cursor')).toMatchObject({
+      defaultCommand: 'agent',
+      install: { commands: ['curl https://cursor.com/install -fsS | bash'] },
+      title: 'Cursor',
+      type: 'cursor',
     });
     expect(getHeterogeneousAgentConfig('amp')).toMatchObject({
       defaultCommand: 'amp',
@@ -77,13 +90,21 @@ describe('heterogeneous agent config', () => {
       docsUrl: 'https://ampcode.com/manual',
       message: 'Amp could not authenticate. Run `amp login` or configure AMP_API_KEY, then retry.',
     });
+    expect(isHeterogeneousAgentAuthRequired('cursor', 'Authentication required')).toBe(true);
+    expect(buildHeterogeneousAgentAuthRequiredError({ agentType: 'cursor' })).toMatchObject({
+      command: 'agent',
+      docsUrl: 'https://cursor.com/docs/cli/installation',
+      message: 'Cursor could not authenticate. Run `agent login`, then retry.',
+    });
   });
 
   it('derives display labels from the shared config source', () => {
     expect(HETEROGENEOUS_TYPE_LABELS).toEqual({
       'amp': 'Amp',
       'claude-code': 'Claude Code',
+      'codebuddy': 'CodeBuddy',
       'codex': 'Codex',
+      'cursor': 'Cursor',
       'hermes': 'Hermes',
       'openclaw': 'OpenClaw',
       'opencode': 'OpenCode',
@@ -93,6 +114,7 @@ describe('heterogeneous agent config', () => {
   });
 
   it('resolves display labels with safe fallbacks', () => {
+    expect(getHeterogeneousTypeLabel('codebuddy')).toBe('CodeBuddy');
     expect(getHeterogeneousTypeLabel('hermes')).toBe('Hermes');
     expect(getHeterogeneousTypeLabel('future-runtime')).toBe('future-runtime');
     expect(getHeterogeneousTypeLabel('toString')).toBe('toString');
@@ -102,6 +124,7 @@ describe('heterogeneous agent config', () => {
 
   it('classifies local CLIs separately from remote platforms', () => {
     expect(isRemoteHeterogeneousType('amp')).toBe(false);
+    expect(isRemoteHeterogeneousType('codebuddy')).toBe(false);
     expect(isRemoteHeterogeneousType('opencode')).toBe(false);
     expect(isRemoteHeterogeneousType('pi')).toBe(false);
     expect(isRemoteHeterogeneousType('qoder')).toBe(false);

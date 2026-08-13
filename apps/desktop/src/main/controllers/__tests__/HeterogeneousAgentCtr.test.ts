@@ -32,6 +32,10 @@ const { mockGetAllWindows } = vi.hoisted(() => ({
   mockGetAllWindows: vi.fn<() => any[]>(() => []),
 }));
 
+const { loggerInfoMock } = vi.hoisted(() => ({
+  loggerInfoMock: vi.fn(),
+}));
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => mockGetAllWindows() },
   app: {
@@ -48,7 +52,7 @@ vi.mock('@/utils/logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
     error: vi.fn(),
-    info: vi.fn(),
+    info: loggerInfoMock,
     verbose: vi.fn(),
     warn: vi.fn(),
   }),
@@ -264,6 +268,7 @@ describe('HeterogeneousAgentCtr', () => {
     codexAppServerCloseMock.mockReset();
     codexAppServerConstructMock.mockReset();
     codexAppServerInterruptMock.mockReset();
+    loggerInfoMock.mockReset();
     mockGetAllWindows.mockReset();
     platformMock.mockReturnValue('linux');
     vi.mocked(existsSync).mockReturnValue(true);
@@ -833,6 +838,27 @@ describe('HeterogeneousAgentCtr', () => {
       }
     });
 
+    it('disables CodeBuddy background tasks in the spawned environment', async () => {
+      const { cliArgs, options } = await runSendPrompt('hello', {
+        agentType: 'codebuddy',
+        command: 'codebuddy',
+      });
+
+      expect(cliArgs).toContain('--include-partial-messages');
+      expect(options.env.CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+    });
+
+    it('passes the selected model to the native CodeBuddy process', async () => {
+      const { cliArgs } = await runSendPrompt('hello', {
+        agentType: 'codebuddy',
+        args: ['--model', 'gpt-5.4'],
+        command: 'codebuddy',
+      });
+
+      expect(cliArgs).toContain('--model');
+      expect(cliArgs[cliArgs.indexOf('--model') + 1]).toBe('gpt-5.4');
+    });
+
     it('captures the Claude Code session id from stream-json init events', async () => {
       const { ctr, sessionId } = await runSendPrompt('hello', {}, [
         `${JSON.stringify({ session_id: 'sess_cc_123', subtype: 'init', type: 'system' })}\n`,
@@ -841,6 +867,62 @@ describe('HeterogeneousAgentCtr', () => {
       await expect(ctr.getSessionInfo({ sessionId })).resolves.toEqual({
         agentSessionId: 'sess_cc_123',
       });
+    });
+  });
+
+  describe('sendPrompt (cursor)', () => {
+    beforeEach(() => {
+      spawnCalls.length = 0;
+      execFileMock.mockReset();
+    });
+
+    it('spawns with the positional prompt without writing it to argv logs or trace metadata', async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'development';
+
+      try {
+        const prompt = 'private user request';
+        const systemContext = 'private selected workspace context';
+        const payload = `${systemContext}\n\n${prompt}`;
+        const { proc, writes } = createFakeProc();
+        nextFakeProc = proc;
+        const ctr = new HeterogeneousAgentCtr({
+          appStoragePath,
+          storeManager: { get: vi.fn() },
+        } as any);
+        const { sessionId } = await ctr.startSession({
+          agentType: 'cursor',
+          command: 'agent',
+          cwd: appStoragePath,
+        });
+
+        await ctr.sendPrompt({
+          operationId: 'op-cursor-private',
+          prompt,
+          sessionId,
+          systemContext,
+        });
+
+        const { args: cliArgs } = spawnCalls[0];
+        expect(cliArgs.at(-2)).toBe('--');
+        expect(cliArgs.at(-1)).toBe(payload);
+        expect(writes).toEqual([]);
+
+        const logged = JSON.stringify(loggerInfoMock.mock.calls);
+        expect(logged).toContain('<argv payload redacted>');
+        expect(logged).not.toContain(prompt);
+        expect(logged).not.toContain(systemContext);
+
+        const traceRoot = path.join(appStoragePath, '.heerogeneous-tracing', 'cursor');
+        const traceDirs = await readdir(traceRoot);
+        const metaText = await readFile(path.join(traceRoot, traceDirs[0], 'meta.json'), 'utf8');
+        const meta = JSON.parse(metaText);
+        expect(meta.args).toEqual(cliArgs.slice(0, -1));
+        expect(metaText).not.toContain(prompt);
+        expect(metaText).not.toContain(systemContext);
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
     });
   });
 
@@ -962,6 +1044,26 @@ describe('HeterogeneousAgentCtr', () => {
       ).rejects.toThrow('Claude Code CLI was not found');
 
       expect(detect).toHaveBeenCalledWith('claude', true);
+      expect(spawnCalls).toHaveLength(0);
+    });
+
+    it('fails fast with CodeBuddy install guidance when CodeBuddy is unavailable', async () => {
+      const detect = vi.fn().mockResolvedValue({ available: false });
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+        binaryManager: { detect },
+      } as any);
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codebuddy',
+        command: 'codebuddy',
+      });
+
+      await expect(
+        ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId }),
+      ).rejects.toThrow('CodeBuddy CLI was not found');
+
+      expect(detect).toHaveBeenCalledWith('codebuddy', true);
       expect(spawnCalls).toHaveLength(0);
     });
 

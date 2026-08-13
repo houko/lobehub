@@ -62,6 +62,14 @@ export const claudeCodeBinary: BinarySpec = {
   priority: 1,
 };
 
+/** Tencent CodeBuddy CLI @see https://www.codebuddy.ai/docs/cli/installation */
+export const codeBuddyBinary: BinarySpec = {
+  description: 'CodeBuddy - Tencent agentic coding CLI',
+  detect: () => detectHeterogeneousCliCommand('codebuddy', 'codebuddy'),
+  name: 'codebuddy',
+  priority: 2,
+};
+
 /**
  * OpenAI Codex CLI
  * @see https://github.com/openai/codex
@@ -75,6 +83,14 @@ export const codexBinary: BinarySpec = {
   detect: () => detectHeterogeneousCliCommand('codex', 'codex'),
   name: 'codex',
   priority: 2,
+};
+
+/** Cursor Agent CLI @see https://cursor.com/docs/cli/installation */
+export const cursorBinary: BinarySpec = {
+  description: 'Cursor - Cursor agentic coding CLI',
+  detect: () => detectHeterogeneousCliCommand('cursor', 'agent'),
+  name: 'agent',
+  priority: 3,
 };
 
 /**
@@ -170,7 +186,9 @@ export const aiderBinary: BinarySpec = defineCommandBinary('aider', {
 export const heterogeneousCliAgentBinaries = {
   'amp': ampBinary,
   'claude-code': claudeCodeBinary,
+  'codebuddy': codeBuddyBinary,
   'codex': codexBinary,
+  'cursor': cursorBinary,
   'opencode': opencodeBinary,
   'pi': piBinary,
   'qoder': qoderBinary,

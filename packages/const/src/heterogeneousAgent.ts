@@ -13,7 +13,9 @@ export const HETERO_CONTINUE_PROMPT =
 export const HETEROGENEOUS_AGENT_MODEL_IDS = [
   'amp',
   'claude-code',
+  'codebuddy',
   'codex',
+  'cursor',
   'opencode',
   'pi',
   'qoder',

@@ -29,7 +29,9 @@ export const isHeterogeneousAgentStatusGuideError = (
   return (
     (agentType === 'amp' ||
       agentType === 'claude-code' ||
+      agentType === 'codebuddy' ||
       agentType === 'codex' ||
+      agentType === 'cursor' ||
       agentType === 'opencode' ||
       agentType === 'pi' ||
       agentType === 'qoder') &&

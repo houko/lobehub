@@ -19,6 +19,14 @@ const ampCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfi
   heterogeneousProvider: { command: 'amp', type: 'amp' },
   ...over,
 });
+const codeBuddyCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfig => ({
+  heterogeneousProvider: { command: 'codebuddy', type: 'codebuddy' },
+  ...over,
+});
+const cursorCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfig => ({
+  heterogeneousProvider: { command: 'agent', type: 'cursor' },
+  ...over,
+});
 const openCodeCfg = (over: Partial<LobeAgentAgencyConfig> = {}): LobeAgentAgencyConfig => ({
   heterogeneousProvider: { command: 'opencode', type: 'opencode' },
   ...over,
@@ -44,6 +52,10 @@ describe('isHeterogeneousSandboxExecutionAvailable', () => {
 
   it('keeps Qoder on local or connected devices', () => {
     expect(isHeterogeneousSandboxExecutionAvailable('qoder')).toBe(false);
+  });
+
+  it('keeps Cursor on local or connected devices', () => {
+    expect(isHeterogeneousSandboxExecutionAvailable('cursor')).toBe(false);
   });
 });
 
@@ -183,6 +195,8 @@ describe('resolveExecutionTarget', () => {
   describe('hetero providers without sandbox execution', () => {
     it.each([
       ['Amp', ampCfg],
+      ['CodeBuddy', codeBuddyCfg],
+      ['Cursor', cursorCfg],
       ['OpenCode', openCodeCfg],
       ['Pi', piCfg],
       ['Qoder', qoderCfg],
@@ -1063,6 +1077,7 @@ describe('resolveExecutionPlan', () => {
 
     it.each([
       ['Amp', ampCfg],
+      ['Cursor', cursorCfg],
       ['OpenCode', openCodeCfg],
     ] as const)(
       'keeps %s non-device targets pending instead of constructing a sandbox plan',

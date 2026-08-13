@@ -106,6 +106,35 @@ export const HETEROGENEOUS_AGENT_CONFIGS = [
   },
   {
     auth: {
+      docsUrl: 'https://www.codebuddy.ai/docs/cli/installation',
+      errorMessage: 'CodeBuddy could not authenticate. Run `codebuddy`, use `/login`, then retry.',
+      patterns: [
+        ...COMMON_AUTH_REQUIRED_PATTERNS,
+        'authentication required',
+        'please use \\/login',
+        'not logged in',
+      ],
+      signInCommand: 'codebuddy',
+    },
+    defaultCommand: 'codebuddy',
+    defaultTopicGroupMode: 'byProject',
+    iconId: 'CodeBuddy',
+    install: {
+      commands: [
+        'npm install -g @tencent-ai/codebuddy-code',
+        'brew install Tencent-CodeBuddy/tap/codebuddy-code',
+      ],
+      docsUrl: 'https://www.codebuddy.ai/docs/cli/installation',
+    },
+    kind: 'local-cli',
+    menuKey: 'newCodeBuddyAgent',
+    menuLabelKey: 'newCodeBuddyAgent',
+    resume: { supported: true },
+    title: 'CodeBuddy',
+    type: 'codebuddy',
+  },
+  {
+    auth: {
       docsUrl: 'https://github.com/openai/codex#installing-and-running-codex-cli',
       errorMessage:
         'Codex could not authenticate. Sign in again or refresh its credentials, then retry.',
@@ -125,6 +154,27 @@ export const HETEROGENEOUS_AGENT_CONFIGS = [
     resume: { supported: true },
     title: 'Codex',
     type: 'codex',
+  },
+  {
+    auth: {
+      docsUrl: 'https://cursor.com/docs/cli/installation',
+      errorMessage: 'Cursor could not authenticate. Run `agent login`, then retry.',
+      patterns: [...COMMON_AUTH_REQUIRED_PATTERNS, 'authentication required', 'not logged in'],
+      signInCommand: 'agent login',
+    },
+    defaultCommand: 'agent',
+    defaultTopicGroupMode: 'byProject',
+    iconId: 'Cursor',
+    install: {
+      commands: ['curl https://cursor.com/install -fsS | bash'],
+      docsUrl: 'https://cursor.com/docs/cli/installation',
+    },
+    kind: 'local-cli',
+    menuKey: 'newCursorAgent',
+    menuLabelKey: 'newCursorAgent',
+    resume: { supported: true },
+    title: 'Cursor',
+    type: 'cursor',
   },
   {
     auth: {
