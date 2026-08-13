@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
     getPath: vi.fn(() => '/mock/user/path'),
     getVersion: vi.fn(() => '1.2.3'),
     requestSingleInstanceLock: vi.fn(() => true),
+    setAppUserModelId: vi.fn(),
     isReady: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
     on: vi.fn(),
@@ -82,7 +83,10 @@ vi.mock('@/const/env', () => ({
 }));
 
 vi.mock('@/env', () => ({
-  getDesktopEnv: vi.fn(() => ({ DESKTOP_RENDERER_STATIC: false })),
+  getDesktopEnv: vi.fn(() => ({
+    DESKTOP_APP_ID: 'com.example.distribution',
+    DESKTOP_RENDERER_STATIC: false,
+  })),
 }));
 
 vi.mock('@/const/dir', () => ({
@@ -225,6 +229,36 @@ describe('App', () => {
       expect(
         vi.mocked(appInstance.browserManager.initializeBrowsers).mock.invocationCallOrder[0],
       ).toBeLessThan(initialize.mock.invocationCallOrder[0]);
+    });
+  });
+
+  describe('Windows app user model id', () => {
+    it('claims this build’s id before any window can be created', async () => {
+      const { windows } = await import('@/utils/platform');
+      vi.mocked(windows).mockReturnValue(true);
+
+      appInstance = new App();
+      await appInstance.bootstrap();
+
+      // The value has to be the build's own appId — the one the installer
+      // stamped on the shortcut — or Windows has no shortcut to take a taskbar
+      // icon from and falls back to a generic one.
+      expect(electronApp.setAppUserModelId).toHaveBeenCalledWith('com.example.distribution');
+
+      // And it has to land first: a window inherits whichever id is in force
+      // when it is created.
+      expect(vi.mocked(electronApp.setAppUserModelId).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(appInstance.browserManager.initializeBrowsers).mock.invocationCallOrder[0],
+      );
+
+      vi.mocked(windows).mockReturnValue(false);
+    });
+
+    it('leaves it alone on other platforms', async () => {
+      appInstance = new App();
+      await appInstance.bootstrap();
+
+      expect(electronApp.setAppUserModelId).not.toHaveBeenCalled();
     });
   });
 

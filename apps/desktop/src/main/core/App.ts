@@ -12,6 +12,7 @@ import { isDev } from '@/const/env';
 import type { IControlModule } from '@/controllers';
 import AuthCtr from '@/controllers/AuthCtr';
 import RemoteServerConfigCtr from '@/controllers/RemoteServerConfigCtr';
+import { getDesktopEnv } from '@/env';
 import {
   astSearchBinaries,
   type BinaryCategory,
@@ -235,6 +236,7 @@ export class App {
       app.exit(0);
     }
 
+    this.applyAppUserModelId();
     this.initDevBranding();
 
     // The CLI socket is independent from renderer navigation. Start it in
@@ -500,6 +502,30 @@ export class App {
   private addService = (ServiceClass: IServiceModule) => {
     const service = new ServiceClass(this);
     this.services.set(ServiceClass, service);
+  };
+
+  /**
+   * Claim this build's AppUserModelID before anything can create a window.
+   *
+   * Windows resolves a window's taskbar button — and a notification's icon and
+   * name — through the AppUserModelID, matching it against the one the
+   * installer stamped on the Start Menu shortcut. That is `appId`, so the
+   * running app has to claim the same value or Windows finds no shortcut to
+   * take an icon from and falls back to a generic one.
+   *
+   * Timing matters as much as the value: a window inherits the id in force when
+   * it is created, and `bootstrap()` creates the main window well before the
+   * controller hooks run. This used to sit in `NotificationCtr.afterAppReady`,
+   * hard-coded to a third id belonging to neither the upstream build nor any
+   * distribution, so the taskbar entry was mis-identified on every platform
+   * build.
+   */
+  private applyAppUserModelId = () => {
+    if (!electronIs.windows()) return;
+
+    const appId = getDesktopEnv().DESKTOP_APP_ID;
+    app.setAppUserModelId(appId);
+    logger.debug(`Set Windows AppUserModelID: ${appId}`);
   };
 
   private initDevBranding = () => {

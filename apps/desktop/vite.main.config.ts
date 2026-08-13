@@ -108,6 +108,11 @@ export default defineConfig(async (env) => {
     },
     define: {
       ...processEnvDefine,
+      // Read by `electron-builder.mjs` for `appId`, and needed at runtime too:
+      // Windows keys taskbar grouping and notification identity off the
+      // AppUserModelID, which has to match the one the installer stamped on the
+      // shortcut.
+      'process.env.DESKTOP_APP_ID': JSON.stringify(process.env.DESKTOP_APP_ID),
       // Same trap as the two below. This one also has to reach the main process
       // because `electron-builder.mjs` reads it independently: dropping the
       // publish config alone leaves the updater free to call setFeedURL with the

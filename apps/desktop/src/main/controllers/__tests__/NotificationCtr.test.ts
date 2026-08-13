@@ -107,7 +107,7 @@ describe('NotificationCtr', () => {
       expect(Notification.isSupported).toHaveBeenCalled();
     });
 
-    it('should set app user model ID on Windows', async () => {
+    it('does not claim the app user model ID from here', async () => {
       const { windows } = await import('@/utils/platform');
       const { app, Notification } = await import('electron');
       vi.mocked(windows).mockReturnValue(true);
@@ -115,7 +115,10 @@ describe('NotificationCtr', () => {
 
       controller.afterAppReady();
 
-      expect(app.setAppUserModelId).toHaveBeenCalledWith('com.lobehub.chat');
+      // It belongs to App.bootstrap(): Windows binds a window to whichever id
+      // was in force when the window was created, and these hooks run after the
+      // main window already exists.
+      expect(app.setAppUserModelId).not.toHaveBeenCalled();
 
       vi.mocked(windows).mockReturnValue(false);
     });

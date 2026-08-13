@@ -87,11 +87,9 @@ export default class NotificationCtr extends ControllerModule {
         logger.debug('macOS detected, notification permissions should be handled by system');
       }
 
-      // Set app user model ID on Windows
-      if (electronIs.windows()) {
-        app.setAppUserModelId('com.lobehub.chat');
-        logger.debug('Set Windows App User Model ID for notifications');
-      }
+      // The Windows AppUserModelID — which decides the icon and name a
+      // notification carries — is claimed in `App.bootstrap()` instead. It has
+      // to be set before any window is created, and these hooks run after.
 
       logger.info('Desktop notifications setup completed');
     } catch (error) {

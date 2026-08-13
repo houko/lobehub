@@ -57,6 +57,7 @@ const envNumber = (defaultValue: number) =>
 // listed here AND defined there — the spread alone silently yields undefined.
 const getRuntimeEnv = () => ({
   ...process.env,
+  DESKTOP_APP_ID: process.env.DESKTOP_APP_ID,
   DESKTOP_BACKEND_PROXY_RETHROW_ERRORS: process.env.DESKTOP_BACKEND_PROXY_RETHROW_ERRORS,
   DESKTOP_DISABLE_UPDATES: process.env.DESKTOP_DISABLE_UPDATES,
   DESKTOP_EXTERNAL_NAVIGATION_HOSTS: process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS,
@@ -89,6 +90,16 @@ export const getDesktopEnv = memoize(() =>
 
       // Dev-only failure injection: surface backend proxy errors as uncaught
       // main-process exceptions so Electron's default dialog can be reproduced.
+      // This build's application id — the same value `electron-builder.mjs`
+      // resolves for `appId`, which the NSIS installer stamps onto the Start
+      // Menu shortcut as its AppUserModelID.
+      //
+      // Windows uses that id to decide which taskbar button a window belongs to
+      // and which icon and name a notification carries, so the running app has
+      // to claim the same one. Keep the fallback below in step with
+      // `electron-builder.mjs`.
+      DESKTOP_APP_ID: z.string().optional().default('com.lobehub.lobehub-desktop'),
+
       DESKTOP_BACKEND_PROXY_RETHROW_ERRORS: envBoolean(false),
 
       // Whether this build ships an update feed at all.
