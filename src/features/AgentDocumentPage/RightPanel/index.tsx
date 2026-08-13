@@ -18,7 +18,11 @@ import { useEffectiveWorkingDirectory } from '@/hooks/useEffectiveWorkingDirecto
 import { useClientDataSWR } from '@/libs/swr';
 import { agentDocumentService, agentDocumentSWRKeys } from '@/services/agentDocument';
 import { useAgentStore } from '@/store/agent';
-import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
+import {
+  agentProjectionSelectors,
+  useAgentValue,
+  useCurrentAgentValue,
+} from '@/store/agent/projection';
 import { useGlobalStore } from '@/store/global';
 import { standardizeIdentifier } from '@/utils/identifier';
 
@@ -77,15 +81,11 @@ const AgentDocumentRightPanel = memo(() => {
   const { docId } = useParams<{ docId?: string }>();
   const toggleRightPanel = useGlobalStore((s) => s.toggleRightPanel);
   const activeAgentId = useAgentStore((s) => s.activeAgentId);
-  const isHetero = useAgentStore(agentSelectors.isCurrentAgentHeterogeneous);
+  const isHetero = useCurrentAgentValue(agentProjectionSelectors.heterogeneous);
   const workingDirectory = useEffectiveWorkingDirectory(activeAgentId);
-  const agencyConfig = useAgentStore((s) =>
-    activeAgentId ? agentByIdSelectors.getAgencyConfigById(activeAgentId)(s) : undefined,
-  );
+  const agencyConfig = useAgentValue(activeAgentId, agentProjectionSelectors.agencyConfig);
   const deviceRoutingAvailable = useIsGatewayModeEnabled(activeAgentId);
-  const isWorkspaceAgent = useAgentStore((s) =>
-    activeAgentId ? agentByIdSelectors.isWorkspaceAgentById(activeAgentId)(s) : false,
-  );
+  const isWorkspaceAgent = useAgentValue(activeAgentId, agentProjectionSelectors.workspaceScoped);
   const effectiveTarget = resolveExecutionTarget(agencyConfig, {
     clientExecutionAvailable: isDesktop,
     deviceRoutingAvailable,

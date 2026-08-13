@@ -18,13 +18,17 @@ import { LazySharePopover as SharePopover } from '@/features/SharePopover/lazy';
 import { useGatewayReconnect } from '@/hooks/useGatewayReconnect';
 import { useOperationState } from '@/hooks/useOperationState';
 import { usePermission } from '@/hooks/usePermission';
+import {
+  taskActivityProjectionSelectors,
+  taskDetailProjectionSelectors,
+} from '@/projection/modules/task/derivedSelectors';
 import { useAgentStore } from '@/store/agent';
 import { useChatStore } from '@/store/chat';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { useServerConfigStore } from '@/store/serverConfig';
 import { serverConfigSelectors } from '@/store/serverConfig/selectors';
-import { useTaskStore } from '@/store/task';
-import { taskActivitySelectors, taskDetailSelectors } from '@/store/task/selectors';
+import { useActiveTaskDetailProjection, useTaskStore } from '@/store/task';
+import { taskDetailSelectors } from '@/store/task/selectors';
 import { useUserStore } from '@/store/user';
 import { authSelectors } from '@/store/user/selectors';
 
@@ -62,8 +66,11 @@ export const TopicChatDrawerBody = memo<TopicChatDrawerBodyProps>(
     const replaceMessages = useChatStore((s) => s.replaceMessages);
     const operationState = useOperationState(context);
 
-    const runningOperation = useTaskStore(
-      (s) => taskActivitySelectors.activeDrawerTopicActivity(s)?.runningOperation,
+    const drawerTopicId = useTaskStore((state) => state.activeTopicDrawerTopicId);
+    const runningOperation = useActiveTaskDetailProjection(
+      (detail) =>
+        taskActivityProjectionSelectors.activeDrawerTopicActivity(drawerTopicId)(detail)
+          ?.runningOperation,
     );
     // Pass this drawer's agent explicitly — the run drawer also mounts on the
     // home surface, where the chat store's `activeAgentId` is unset.
@@ -116,9 +123,15 @@ const TopicChatDrawer = memo(() => {
   const { t } = useTranslation(['chat', 'common']);
   const topicId = useTaskStore(taskDetailSelectors.activeTopicDrawerTopicId);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
-  const agentId = useTaskStore(taskDetailSelectors.topicDrawerAgentId);
+  const drawerAgentId = useTaskStore((state) => state.activeTopicDrawerAgentId);
+  const taskAgentId = useActiveTaskDetailProjection(
+    taskDetailProjectionSelectors.activeTaskAgentId,
+  );
+  const agentId = drawerAgentId ?? taskAgentId;
   const drawerTitle = useTaskStore(taskDetailSelectors.topicDrawerTitle);
-  const activity = useTaskStore(taskActivitySelectors.activeDrawerTopicActivity);
+  const activity = useActiveTaskDetailProjection(
+    taskActivityProjectionSelectors.activeDrawerTopicActivity(topicId),
+  );
   const closeTopicDrawer = useTaskStore((s) => s.closeTopicDrawer);
   const useFetchTaskDetail = useTaskStore((s) => s.useFetchTaskDetail);
   const enableTopicLinkShare = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);

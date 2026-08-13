@@ -6,8 +6,7 @@ import { useAgentSelectionPolicies } from '@/features/ResourcePermission/useAgen
 import { useResourcePermission } from '@/features/ResourcePermission/useResourcePermission';
 import { usePermission } from '@/hooks/usePermission';
 import type { ResourceAccessLevel } from '@/services/resourcePermission';
-import { useAgentStore } from '@/store/agent';
-import { agentByIdSelectors } from '@/store/agent/selectors';
+import { useAgentData } from '@/store/agent/projection';
 
 export interface AgentPermissionState {
   accessError: unknown;
@@ -39,7 +38,7 @@ export interface AgentPermissionState {
  */
 export const useAgentPermission = (agentId: string): AgentPermissionState => {
   const { allowed: canEditContent } = usePermission('edit_own_content');
-  const agent = useAgentStore(agentByIdSelectors.getAgentById(agentId));
+  const agent = useAgentData(agentId);
 
   const isWorkspaceAgent = !!agent?.workspaceId;
   const isPrivate = agent?.visibility === 'private';

@@ -8,8 +8,7 @@ import { HotkeysProvider } from 'react-hotkeys-hook';
 import { Outlet } from 'react-router';
 
 import ProtocolUrlHandler from '@/features/ProtocolUrlHandler';
-import { useChatStore } from '@/store/chat';
-import { topicSelectors } from '@/store/chat/selectors';
+import { useCurrentChatTopic } from '@/store/chat/slices/topic/projection';
 
 import PopupTitleBar from './TitleBar';
 
@@ -20,7 +19,7 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 }));
 
 const PopupLayout: FC = () => {
-  const topicTitle = useChatStore((s) => topicSelectors.currentActiveTopic(s)?.title);
+  const topicTitle = useCurrentChatTopic()?.title;
 
   return (
     <HotkeysProvider initiallyActiveScopes={[HotkeyScopeEnum.Global]}>

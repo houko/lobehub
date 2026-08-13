@@ -1,5 +1,5 @@
-import { getAgentStoreState } from '@/store/agent';
-import { agentByIdSelectors } from '@/store/agent/selectors';
+import { getAgentProjectionById } from '@/projection';
+import { agentProjectionSelectors } from '@/store/agent/projection';
 
 /**
  * Snapshot the given agent's current model/provider so a newly created topic
@@ -14,9 +14,8 @@ export const snapshotAgentModel = (
 ): { model?: string; provider?: string } => {
   if (!agentId) return {};
 
-  const agentState = getAgentStoreState();
-  const model = agentByIdSelectors.getAgentModelById(agentId)(agentState);
+  const model = agentProjectionSelectors.model(getAgentProjectionById(agentId));
   if (!model) return {};
 
-  return { model, provider: agentByIdSelectors.getAgentModelProviderById(agentId)(agentState) };
+  return { model, provider: agentProjectionSelectors.provider(getAgentProjectionById(agentId)) };
 };

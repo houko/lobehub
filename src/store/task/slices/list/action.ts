@@ -1,26 +1,21 @@
-import { mutate, useClientDataSWR } from '@/libs/swr';
+import { mutate } from '@/libs/swr';
 import { projectionKeys, taskKeys } from '@/libs/swr/keys';
 import { getCacheScope } from '@/libs/swr/useCacheScope';
 import {
-  getProjectionStoreState,
-  nextProjectionObservedAt,
-  selectTaskGroupList,
-  selectTaskListIndex,
-  selectTaskListItem,
   taskGroupListViewContract,
   taskListViewContract,
   useProjectionViewHydration,
 } from '@/projection';
+import {
+  taskGroupListProjectionQuery,
+  taskListProjectionQuery,
+} from '@/projection/modules/task/queries';
+import { useProjectionRequest } from '@/projection/query/hook';
 import { taskService } from '@/services/task';
 import type { StoreSetter } from '@/store/types';
 
 import type { TaskStore } from '../../store';
-import type {
-  TaskGroupItem,
-  TaskListItem,
-  TaskListVisibilityFilter,
-  TaskViewMode,
-} from './initialState';
+import type { TaskListVisibilityFilter, TaskViewMode } from './initialState';
 
 /**
  * Sentinel used as `listAgentId` when the task list is showing tasks across all agents
@@ -58,20 +53,6 @@ const filterToServerVisibility = (
   if (filter === 'all') return undefined;
   if (filter === 'workspace') return 'public';
   return 'private';
-};
-
-/**
- * Cleared whenever the list scope changes (all-agents <-> a specific agent).
- * The list and group datasets are shared store fields, so without this reset
- * the previous scope's tasks would render until the new fetch resolves — e.g.
- * the `/tasks` page briefly showing only the last-visited agent's tasks.
- */
-const scopeChangeResetState = {
-  isTaskGroupListInit: false,
-  isTaskListInit: false,
-  taskGroups: [] as TaskGroupItem[],
-  tasks: [] as TaskListItem[],
-  tasksTotal: 0,
 };
 
 type Setter = StoreSetter<TaskStore>;
@@ -122,11 +103,8 @@ export class TaskListSliceActionImpl {
 
   setListVisibility = (visibility: TaskListVisibilityFilter): void => {
     if (this.#get().listVisibility === visibility) return;
-    // Clear the cached list so the chip flip doesn't render stale entries
-    // from the previous filter while the new fetch is in flight.
     this.#set(
       {
-        ...scopeChangeResetState,
         listQueryVisibility: visibility,
         listVisibility: visibility,
       },
@@ -154,11 +132,7 @@ export class TaskListSliceActionImpl {
         ? ALL_AGENTS_LIST_KEY
         : agentId;
     if (effectiveKey && this.#get().listAgentId !== effectiveKey) {
-      this.#set(
-        { ...scopeChangeResetState, listAgentId: effectiveKey },
-        false,
-        'useFetchTaskGroupList/syncAgentId',
-      );
+      this.#set({ listAgentId: effectiveKey }, false, 'useFetchTaskGroupList/syncAgentId');
     }
     const listVisibility = this.#get().listVisibility;
 
@@ -168,43 +142,21 @@ export class TaskListSliceActionImpl {
       enabled && Boolean(effectiveKey),
     );
 
-    return useClientDataSWR(
+    const requestParams = {
+      request: {
+        assigneeAgentId: allAgents ? undefined : agentId,
+        groups: DEFAULT_KANBAN_GROUPS,
+        hasGoal: false,
+        projectId,
+        visibility: filterToServerVisibility(listVisibility),
+      },
+      signature: { agentKey: effectiveKey, visibility: listVisibility },
+    };
+    return useProjectionRequest(
       enabled && effectiveKey ? taskKeys.groupList(effectiveKey, listVisibility, projectId) : null,
-      async () => {
-        const scope = getCacheScope();
-        const observedAt = nextProjectionObservedAt();
-        const result = await taskService.groupList({
-          assigneeAgentId: allAgents ? undefined : agentId,
-          groups: DEFAULT_KANBAN_GROUPS,
-          hasGoal: false,
-          projectId,
-          visibility: filterToServerVisibility(listVisibility),
-        });
-        getProjectionStoreState().commitTaskGroupList(
-          scope,
-          result.data,
-          { agentKey: effectiveKey, visibility: listVisibility },
-          observedAt,
-        );
-        return result;
-      },
-      {
-        onSuccess: () => {
-          const scope = getCacheScope();
-          const projectionScope = getProjectionStoreState().scopes[scope];
-          const taskGroups = selectTaskGroupList(projectionScope, {
-            agentKey: effectiveKey,
-            visibility: listVisibility,
-          });
-          if (!taskGroups) return;
-          this.#set(
-            { isTaskGroupListInit: true, taskGroups },
-            false,
-            'useFetchTaskGroupList/onSuccess',
-          );
-        },
-        revalidateOnFocus: false,
-      },
+      taskGroupListProjectionQuery,
+      requestParams,
+      { revalidateOnFocus: false },
     );
   };
 
@@ -241,13 +193,11 @@ export class TaskListSliceActionImpl {
       enabled && Boolean(effectiveKey),
     );
 
-    // `tasks` is shared by the full Tasks page and embedded overviews. Reset it
-    // when either part of the effective query changes so an `all` override does
-    // not temporarily inherit a previously initialized private/workspace list.
+    // The selected signature is UI state; result sets remain independently
+    // keyed inside Projection, so switching signatures never overwrites data.
     if (effectiveKey && (listAgentId !== effectiveKey || listQueryVisibility !== listVisibility)) {
       this.#set(
         {
-          ...scopeChangeResetState,
           listAgentId: effectiveKey,
           listQueryVisibility: listVisibility,
         },
@@ -256,54 +206,23 @@ export class TaskListSliceActionImpl {
       );
     }
 
-    return useClientDataSWR(
+    const requestParams = {
+      request: {
+        ...(allAgents || projectId ? {} : { assigneeAgentId: agentId }),
+        hasGoal: false,
+        orderBy,
+        projectId,
+        visibility: filterToServerVisibility(listVisibility),
+      },
+      signature: { agentKey: effectiveKey, visibility: listVisibility },
+    };
+    return useProjectionRequest(
       enabled && effectiveKey
         ? taskKeys.list(effectiveKey, listVisibility, orderBy, projectId)
         : null,
-      async ([, id]: [string, string]) => {
-        const scope = getCacheScope();
-        const observedAt = nextProjectionObservedAt();
-        const result = await this.fetchTaskList({
-          ...(allAgents || projectId ? {} : { assigneeAgentId: id }),
-          hasGoal: false,
-          orderBy,
-          projectId,
-          visibility: filterToServerVisibility(listVisibility),
-        });
-        getProjectionStoreState().commitTaskList(
-          scope,
-          result.data,
-          result.total,
-          { agentKey: effectiveKey, visibility: listVisibility },
-          observedAt,
-        );
-        return result;
-      },
-      {
-        onSuccess: () => {
-          const scope = getCacheScope();
-          const projectionScope = getProjectionStoreState().scopes[scope];
-          const index = selectTaskListIndex(projectionScope, {
-            agentKey: effectiveKey,
-            visibility: listVisibility,
-          });
-          if (!index) return;
-          const tasks = index.refs.flatMap((ref) => {
-            const item = selectTaskListItem(projectionScope, projectionScope?.records.task[ref.id]);
-            return item ? [item] : [];
-          });
-          this.#set(
-            {
-              isTaskListInit: true,
-              tasks,
-              tasksTotal: index.total,
-            },
-            false,
-            'useFetchTaskList/onSuccess',
-          );
-        },
-        revalidateOnFocus: false,
-      },
+      taskListProjectionQuery,
+      requestParams,
+      { revalidateOnFocus: false },
     );
   };
 }

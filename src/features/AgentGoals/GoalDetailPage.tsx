@@ -23,8 +23,7 @@ import { useNavigateToTaskDetail } from '@/features/AgentTasks/shared/taskDetail
 import NavHeader from '@/features/NavHeader';
 import WideScreenContainer from '@/features/WideScreenContainer';
 import { useActivityTime } from '@/hooks/useActivityTime';
-import { useTaskStore } from '@/store/task';
-import { taskDetailSelectors } from '@/store/task/selectors';
+import { useTaskDetailProjection } from '@/projection/modules/task/viewHooks';
 import { useVerifyStore, verifySelectors } from '@/store/verify';
 
 import GoalDetailActions from './GoalDetailActions';
@@ -149,7 +148,7 @@ const GoalDetailPage = memo<GoalDetailPageProps>(({ agentId, goalId }) => {
   const { t } = useTranslation('chat');
   const navigateToTaskDetail = useNavigateToTaskDetail();
   const { error, isInitialLoading, isNotFound, onRetry } = useActiveTaskDetail(goalId);
-  const task = useTaskStore(taskDetailSelectors.taskDetailById(goalId));
+  const task = useTaskDetailProjection(goalId);
   const useFetchAcceptanceBySubject = useVerifyStore((s) => s.useFetchAcceptanceBySubject);
   const useFetchAcceptanceBundle = useVerifyStore((s) => s.useFetchAcceptanceBundle);
   const acceptance = useVerifyStore(verifySelectors.acceptanceBySubject('task', task?.id));

@@ -6,8 +6,9 @@ import { useTranslation } from 'react-i18next';
 import { DESKTOP_HEADER_ICON_SMALL_SIZE } from '@/const/layoutTokens';
 import { conversationSelectors, useConversationStore } from '@/features/Conversation';
 import NavHeader from '@/features/NavHeader';
+import { useFetchAgentTopics } from '@/hooks/useFetchAgentTopics';
 import { useChatStore } from '@/store/chat';
-import { topicSelectors } from '@/store/chat/slices/topic/selectors';
+import { useChatTopicById, useChatTopicsByAgentId } from '@/store/chat/slices/topic/projection';
 
 import { usePageAgentPanelControl, usePageAgentPanelOverride } from '../RightPanel/OverrideContext';
 import TopicItem from './TopicSelector/TopicItem';
@@ -17,15 +18,11 @@ const CopilotToolbar = memo(() => {
   const [topicPopoverOpen, setTopicPopoverOpen] = useState(false);
   const agentId = useConversationStore(conversationSelectors.agentId);
 
-  useChatStore((s) => s.useFetchTopics)(true, { agentId });
+  useFetchAgentTopics({ agentId });
 
-  const [activeTopicId, switchTopic, topics] = useChatStore((s) => [
-    s.activeTopicId,
-    s.switchTopic,
-    topicSelectors.currentTopics(s),
-  ]);
-
-  const currentTopic = useChatStore(topicSelectors.currentActiveTopic);
+  const [activeTopicId, switchTopic] = useChatStore((s) => [s.activeTopicId, s.switchTopic]);
+  const topics = useChatTopicsByAgentId(agentId)?.items;
+  const currentTopic = useChatTopicById(activeTopicId);
 
   const { toggle: togglePageAgentPanel } = usePageAgentPanelControl();
   const hasOverride = !!usePageAgentPanelOverride();

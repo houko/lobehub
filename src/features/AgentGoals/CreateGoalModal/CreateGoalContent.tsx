@@ -33,7 +33,7 @@ import { pickAndInsertAttachments } from '@/features/EditorCanvas/editorAttachme
 import { usePermission } from '@/hooks/usePermission';
 import { verifyService } from '@/services/verify';
 import { useAgentStore } from '@/store/agent';
-import { agentByIdSelectors, agentSelectors } from '@/store/agent/selectors';
+import { agentProjectionSelectors, useAgentValue } from '@/store/agent/projection';
 import { useTaskStore } from '@/store/task';
 
 import { buildGoalTaskConfig } from './goalConfig';
@@ -257,16 +257,10 @@ const CreateGoalContent = memo<CreateGoalContentProps>((props) => {
   const createTask = useTaskStore((s) => s.createTask);
   const isCreating = useTaskStore((s) => s.isCreatingTask);
   const activeWorkspaceId = useActiveWorkspaceId();
-  const model = useAgentStore((s) =>
-    agentId
-      ? agentByIdSelectors.getAgentModelById(agentId)(s)
-      : agentSelectors.currentAgentModel(s),
-  );
-  const provider = useAgentStore((s) =>
-    agentId
-      ? agentByIdSelectors.getAgentModelProviderById(agentId)(s)
-      : agentSelectors.currentAgentModelProvider(s),
-  );
+  const activeAgentId = useAgentStore((s) => s.activeAgentId);
+  const resolvedAgentId = agentId ?? activeAgentId;
+  const model = useAgentValue(resolvedAgentId, agentProjectionSelectors.model);
+  const provider = useAgentValue(resolvedAgentId, agentProjectionSelectors.provider);
 
   const [step, setStep] = useState<'describe' | 'preparing' | 'review'>('describe');
   const [plan, setPlan] = useState<CreateGoalParams>({

@@ -21,7 +21,8 @@ import {
 } from '@/features/AgentProfileArtwork/utils';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useAgentStore } from '@/store/agent';
-import { agentArtworkSelectors, agentSelectors } from '@/store/agent/selectors';
+import { agentProjectionSelectors, useAgentMeta, useAgentValue } from '@/store/agent/projection';
+import { agentArtworkSelectors } from '@/store/agent/selectors';
 import { useAiInfraStore } from '@/store/aiInfra';
 import { aiProviderSelectors } from '@/store/aiInfra/selectors';
 import { useFileStore } from '@/store/file';
@@ -153,10 +154,8 @@ const AgentArtworkStudioContent = memo<AgentArtworkStudioContentProps>(({ agentI
   const { t } = useTranslation('setting');
   const { close } = useModalContext();
   const navigate = useWorkspaceAwareNavigate();
-  const meta = useAgentStore(agentSelectors.getAgentMetaById(agentId));
-  const systemRole = useAgentStore(
-    (s) => agentSelectors.getAgentConfigById(agentId)(s)?.systemRole,
-  );
+  const meta = useAgentMeta(agentId);
+  const systemRole = useAgentValue(agentId, agentProjectionSelectors.systemRole);
   const generation = useAgentStore(agentArtworkSelectors.generationByAgentId(agentId));
   const generateAgentArtwork = useAgentStore((s) => s.generateAgentArtwork);
   const cancelAgentArtworkGeneration = useAgentStore((s) => s.cancelAgentArtworkGeneration);
