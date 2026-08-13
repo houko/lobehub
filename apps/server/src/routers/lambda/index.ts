@@ -29,6 +29,7 @@ import { agentGroupRouter } from './agentGroup';
 import { agentLabelRouter } from './agentLabel';
 import { agentNotifyRouter } from './agentNotify';
 import { agentQuotaRouter } from './agentQuota';
+import { agentShareRouter } from './agentShare';
 import { agentSignalRouter } from './agentSignal';
 import { agentSkillsRouter } from './agentSkills';
 import { aiAgentRouter } from './aiAgent';
@@ -104,6 +105,7 @@ export const lambdaRouter = router({
   agentLabel: agentLabelRouter,
   agentSkills: agentSkillsRouter,
   agentSignal: agentSignalRouter,
+  agentShare: agentShareRouter,
   task: taskRouter,
   changelog: changelogRouter,
   brief: briefRouter,
