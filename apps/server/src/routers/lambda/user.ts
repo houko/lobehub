@@ -116,6 +116,28 @@ const retryOnboardingUnderstandingSourceInputSchema = z
     topicId: understandingIdSchema,
   })
   .strict() satisfies z.ZodType<RetryOnboardingUnderstandingProviderInput>;
+const reconcileOnboardingUnderstandingProvidersInputSchema = z
+  .object({
+    providerIds: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(64)
+          .regex(/^[\w-]+$/),
+      )
+      .max(16),
+    responseLanguage: z
+      .string()
+      .trim()
+      .min(2)
+      .max(64)
+      .regex(/^[A-Z]{2,3}(?:-[A-Z0-9]{2,8})*$/i),
+    sessionId: understandingIdSchema,
+    topicId: understandingIdSchema,
+  })
+  .strict();
 const confirmOnboardingUnderstandingInputSchema = z
   .object({
     resultId: understandingIdSchema,
@@ -508,6 +530,12 @@ export const userRouter = router({
   resetSettings: userProcedure.mutation(async ({ ctx }) => {
     return ctx.userModel.deleteSetting();
   }),
+
+  reconcileOnboardingUnderstandingProviders: understandingServiceProcedure
+    .input(reconcileOnboardingUnderstandingProvidersInputSchema)
+    .mutation(async ({ ctx, input }): Promise<OnboardingUnderstandingPollingResult> => {
+      return ctx.understandingService.reconcileProviders(input);
+    }),
 
   reviseOnboardingUnderstanding: understandingServiceProcedure
     .input(reviseOnboardingUnderstandingInputSchema)

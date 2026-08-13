@@ -211,6 +211,7 @@ const createHarness = (initialSession?: OnboardingUnderstandingSession) => {
       };
       return { revision };
     }),
+    reconcileProviders: vi.fn(async () => ({ attempts: [], session: session! })),
     prepareWriting: vi.fn(async ({ sourceFingerprint, threadId }) => {
       const feedbackRevision = session?.feedback?.revision ?? 0;
       const generationRevision = (session?.generationRevision ?? 0) + 1;
@@ -491,6 +492,52 @@ describe('UnderstandingService', () => {
       expect.objectContaining({
         providers: [{ id: 'github', revision: 1 }],
       }),
+      expect.any(Object),
+    );
+  });
+
+  /** @example Reconciliation dispatches only GitHub after Gmail fails for missing permission. */
+  it('dispatches only provider attempts selected by atomic reconciliation', async () => {
+    // ROOT CAUSE:
+    //
+    // Retrying a failed Understanding session operated only on its original provider manifest, so
+    // a GitHub connection added after navigating backward was never dispatched. Retrying each failed
+    // source independently also repeated non-retryable Gmail permission failures.
+    //
+    // We fixed this by letting the repository return the exact running revisions to dispatch.
+    const gmail = {
+      ...providerState('failed', 1),
+      errors: [
+        {
+          code: 'GMAIL_READ_PERMISSION_REQUIRED',
+          message: 'Gmail read permission is required',
+          operation: 'permission',
+          provider: 'gmail',
+          retryable: false,
+        },
+      ],
+      failedCount: 1,
+    };
+    const next = createSession({ github: providerState('running', 1), gmail });
+    const harness = createHarness(createSession({ gmail }));
+    harness.repository.reconcileProviders.mockImplementationOnce(async () => {
+      harness.setSession(next);
+      return { attempts: [{ id: 'github', revision: 1 }], session: next };
+    });
+
+    await expect(
+      harness.service.reconcileProviders({
+        providerIds: ['gmail', 'github'],
+        responseLanguage: 'zh-CN',
+        sessionId: 'session-1',
+        topicId: 'topic-1',
+      }),
+    ).resolves.toMatchObject({
+      sources: { github: { status: 'running' }, gmail: { status: 'failed' } },
+    });
+
+    expect(mockTriggerProviders).toHaveBeenCalledWith(
+      expect.objectContaining({ providers: [{ id: 'github', revision: 1 }] }),
       expect.any(Object),
     );
   });

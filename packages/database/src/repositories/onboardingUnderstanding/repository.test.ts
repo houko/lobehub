@@ -313,6 +313,53 @@ describe('OnboardingUnderstandingRepository', () => {
     ).rejects.toThrow('feedback is no longer active');
   });
 
+  /** @example A newly connected GitHub source runs while a Gmail permission failure stays failed. */
+  it('adds new providers without retrying non-retryable provider failures', async () => {
+    // ROOT CAUSE:
+    //
+    // The original session manifest was immutable during retry. Returning to connector setup and
+    // adding GitHub therefore retried only the existing Gmail failure, while GitHub never entered
+    // the session. Permission failures were also retried even though the OAuth grant had not changed.
+    //
+    // We fixed this with one locked mutation that adds new providers and restarts only failures whose
+    // persisted diagnostics explicitly allow retry.
+    await repository.initialize(topicId, sessionId, ['gmail']);
+    const { revision } = await repository.markProviderRunning(topicId, sessionId, 'gmail');
+    await repository.failProvider({
+      errors: [
+        {
+          code: 'GMAIL_READ_PERMISSION_REQUIRED',
+          message: 'Gmail read permission is required',
+          operation: 'permission',
+          provider: 'gmail',
+          retryable: false,
+        },
+      ],
+      failedCount: 1,
+      providerId: 'gmail',
+      revision,
+      sessionId,
+      succeededCount: 0,
+      topicId,
+    });
+
+    const reconciled = await repository.reconcileProviders({
+      providerIds: ['gmail', 'github'],
+      sessionId,
+      topicId,
+    });
+
+    expect(reconciled.attempts).toEqual([{ id: 'github', revision: 1 }]);
+    expect(reconciled.session.sources).toMatchObject({
+      github: { errors: [], revision: 1, status: 'running' },
+      gmail: {
+        errors: [expect.objectContaining({ code: 'GMAIL_READ_PERMISSION_REQUIRED' })],
+        revision: 1,
+        status: 'failed',
+      },
+    });
+  });
+
   /**
    * @example
    * expect(stale.published).toBe(false);

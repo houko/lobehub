@@ -115,6 +115,17 @@ interface ExtendSessionInput {
   topicId: string;
 }
 
+interface ReconcileProvidersInput {
+  providerIds: string[];
+  sessionId: string;
+  topicId: string;
+}
+
+interface ReconcileProvidersResult {
+  attempts: Array<{ id: string; revision: number }>;
+  session: OnboardingUnderstandingSession;
+}
+
 interface CommitWritingInput {
   assistantMessageId: string;
   feedbackRevision: number;
@@ -370,6 +381,75 @@ export class OnboardingUnderstandingRepository {
 
         const nextSession = parseSession({ ...session, feedback: nextFeedback, sources });
         return { nextSession, result: nextSession, write: true };
+      }),
+    );
+  };
+
+  /**
+   * Atomically adds newly connected providers and restarts retryable provider failures.
+   *
+   * Use when:
+   * - The user returns from connector setup with a changed provider selection
+   * - An interrupted collection should resume without retrying permission failures
+   *
+   * Expects:
+   * - Provider IDs were validated against the runtime provider registry and connector availability
+   * - The session is active and unconfirmed
+   *
+   * Returns:
+   * - The updated session and exact running provider revisions that should be dispatched
+   */
+  reconcileProviders = async ({
+    providerIds,
+    sessionId,
+    topicId,
+  }: ReconcileProvidersInput): Promise<ReconcileProvidersResult> => {
+    providerIds.forEach(assertProviderId);
+    return this.db.transaction((tx) =>
+      mutateTopicSession(tx, this.userId, topicId, (persisted) => {
+        const session = requireSession(topicId, sessionId, persisted);
+        if (session.confirmedAt) throw new UnderstandingPreconditionError('session_confirmed');
+
+        const sources = { ...session.sources };
+        const attempts: ReconcileProvidersResult['attempts'] = [];
+        for (const providerId of [...new Set(providerIds)].sort()) {
+          const current = sources[providerId];
+          if (!current) {
+            sources[providerId] = {
+              ...initialProviderState(),
+              revision: 1,
+              status: 'running',
+            };
+            attempts.push({ id: providerId, revision: 1 });
+            continue;
+          }
+          if (current.status !== 'failed' || !current.errors.some(({ retryable }) => retryable)) {
+            continue;
+          }
+
+          const revision = current.revision + 1;
+          sources[providerId] = {
+            ...current,
+            completedAt: undefined,
+            errors: [],
+            failedCount: 0,
+            revision,
+            status: 'running',
+            succeededCount: 0,
+          };
+          attempts.push({ id: providerId, revision });
+        }
+        if (attempts.length === 0) {
+          return { nextSession: session, result: { attempts, session }, write: false };
+        }
+
+        const nextSession = parseSession({ ...session, sources });
+        return {
+          clearTaskRecommendations: true,
+          nextSession,
+          result: { attempts, session: nextSession },
+          write: true,
+        };
       }),
     );
   };

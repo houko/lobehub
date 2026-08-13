@@ -75,6 +75,13 @@ interface ProcessCollectedInput {
   topicId: string;
 }
 
+interface ReconcileProvidersInput {
+  providerIds: string[];
+  responseLanguage: string;
+  sessionId: string;
+  topicId: string;
+}
+
 type UnderstandingRepository = Pick<
   OnboardingUnderstandingRepository,
   | 'commitWriting'
@@ -90,6 +97,7 @@ type UnderstandingRepository = Pick<
   | 'initialize'
   | 'markProviderRunning'
   | 'prepareWriting'
+  | 'reconcileProviders'
 >;
 
 type UnderstandingContexts = Pick<UnderstandingSourceStore, 'get' | 'put'>;
@@ -333,6 +341,80 @@ export class UnderstandingService {
     );
   };
 
+  /**
+   * Reconciles the current connector selection with an active Understanding session.
+   *
+   * Use when:
+   * - The user returns from connector setup after adding another provider
+   * - Retryable provider failures should be resumed without repeating permission failures
+   *
+   * Expects:
+   * - Provider IDs come from the current onboarding connector selection
+   * - The referenced session belongs to the active onboarding topic
+   *
+   * Returns:
+   * - The latest polling result after newly added and retryable providers are dispatched
+   */
+  reconcileProviders = async (
+    input: ReconcileProvidersInput,
+  ): Promise<OnboardingUnderstandingPollingResult> => {
+    const { OnboardingUnderstandingWorkflow } =
+      await import('@/server/workflows/onboardingUnderstanding');
+    OnboardingUnderstandingWorkflow.assertAvailable();
+    await this.activeSession(input.topicId, input.sessionId);
+
+    const requestedProviderIds = [...new Set(input.providerIds)].sort();
+    if (requestedProviderIds.some((providerId) => !this.dependencies.providers.has(providerId))) {
+      throw new UnderstandingResourceNotFoundError('session');
+    }
+    const availableProviderIds = new Set(await this.listSourceProviderIds());
+    const providerIds = requestedProviderIds.filter((providerId) =>
+      availableProviderIds.has(providerId),
+    );
+    const { attempts } = await this.dependencies.repository.reconcileProviders({
+      providerIds,
+      sessionId: input.sessionId,
+      topicId: input.topicId,
+    });
+    if (attempts.length === 0) return this.get(input.topicId);
+
+    try {
+      // Dispatch only the revisions transitioned to running by the atomic database mutation.
+      await OnboardingUnderstandingWorkflow.triggerProviders(
+        {
+          providers: attempts,
+          responseLanguage: input.responseLanguage,
+          sessionId: input.sessionId,
+          startedAt: Date.now(),
+          topicId: input.topicId,
+          userId: this.dependencies.userId,
+        },
+        {
+          workflowRunId: `onboarding-understanding-reconcile-${createHash('sha256')
+            .update(input.sessionId)
+            .update('\0')
+            .update(attempts.map(({ id, revision }) => `${id}-${revision}`).join(','))
+            .digest('hex')
+            .slice(0, 32)}`,
+        },
+      );
+    } catch (triggerError) {
+      await Promise.allSettled(
+        attempts.map(({ id, revision }) =>
+          this.failProvider({
+            providerId: id,
+            revision,
+            sessionId: input.sessionId,
+            topicId: input.topicId,
+          }),
+        ),
+      );
+      throw triggerError;
+    }
+
+    return this.get(input.topicId);
+  };
+
   revise = async (
     input: ReviseOnboardingUnderstandingInput,
   ): Promise<OnboardingUnderstandingPollingResult> => {
@@ -479,6 +561,7 @@ export class UnderstandingService {
     if (state.status !== 'failed') {
       throw new UnderstandingPreconditionError('source_not_retryable');
     }
+    if (!state.errors.some(({ retryable }) => retryable)) return this.get(input.topicId);
     const availableProviderIds = await this.dependencies.connectorData.listAvailableProviderIds([
       input.providerId,
     ]);
