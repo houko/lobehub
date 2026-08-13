@@ -114,12 +114,15 @@ describe('buildHeteroSpawnArgs', () => {
     expect(resolveAmpAgentMode({ args: ['--mode=ultra'], mode: 'low' })).toBe('ultra');
   });
 
-  it.each(AMP_AGENT_MODES)('forwards structured Amp mode %s through both spawn paths', (mode) => {
-    const provider: HeterogeneousProviderConfig = { mode, type: 'amp' };
+  it.each(AMP_AGENT_MODES)(
+    'forwards structured Amp mode %s through direct and legacy-compatible device paths',
+    (mode) => {
+      const provider: HeterogeneousProviderConfig = { mode, type: 'amp' };
 
-    expect(buildHeteroSpawnArgs(provider)).toEqual(['--mode', mode]);
-    expect(buildHeteroExecArgs(provider)).toEqual(['--mode', mode]);
-  });
+      expect(buildHeteroSpawnArgs(provider)).toEqual(['--mode', mode]);
+      expect(buildHeteroExecArgs(provider)).toEqual(['--agent-arg=--mode', `--agent-arg=${mode}`]);
+    },
+  );
 
   it('does not override Amp mode when Default is selected', () => {
     const provider: HeterogeneousProviderConfig = {

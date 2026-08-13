@@ -424,9 +424,10 @@ export const buildHeteroSpawnArgs = (
  * wrapper first, not by the native agent binary. Native provider args are
  * encoded with `--agent-arg=<arg>` so wrapper flags such as `-c, --command`
  * never collide with provider flags. Keep selector overrides in the wrapper's
- * structured `--mode` / `--model` / `--effort` form; `lh hetero exec`
- * translates them into native provider arguments immediately before
- * `spawnAgent`.
+ * structured `--model` / `--effort` form; `lh hetero exec` translates them
+ * into native provider arguments immediately before `spawnAgent`. Amp mode is
+ * encoded as a native argument because older device CLIs predate the wrapper's
+ * structured `--mode` option but already support `--agent-arg`.
  */
 export const buildHeteroExecArgs = (
   provider: HeterogeneousProviderConfig | undefined | null,
@@ -453,7 +454,12 @@ export const buildHeteroExecArgs = (
 
   if (provider.type === 'amp') {
     const mode = getExplicitAmpAgentMode(provider);
-    if (mode && !hasCliFlag(baseArgs, '--mode')) selectorArgs.push('--mode', mode);
+    if (mode && !hasCliFlag(baseArgs, '--mode')) {
+      wrapperArgs.push(
+        `${HETERO_EXEC_AGENT_ARG_FLAG}=--mode`,
+        `${HETERO_EXEC_AGENT_ARG_FLAG}=${mode}`,
+      );
+    }
   }
 
   if (provider.type === 'claude-code' || provider.type === 'codebuddy') {
