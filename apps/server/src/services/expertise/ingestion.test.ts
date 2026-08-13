@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 
+import { expertiseHits, expertiseRuns } from '@/database/schemas';
+
 import type { SelfIterationCompletionPayload } from '../agentSignal/services/selfIteration/completion';
 import { ExpertiseIngestionService } from './ingestion';
 
@@ -53,5 +55,64 @@ describe('ExpertiseIngestionService.ingestSelfReview', () => {
 
     expect(result).toEqual({ ingested: 0, reason: 'not-review' });
     expect(ingestCompletion).not.toHaveBeenCalled();
+  });
+});
+
+describe('ExpertiseIngestionService.persistDomainRun', () => {
+  it('uses the persisted run id for the lesson hit', async () => {
+    const inserted = new Map<unknown, Record<string, unknown>[]>();
+    const selectResults = [[], [{ value: 0 }], [{ active: 1, compiled: 0, retired: 0 }], []];
+    let selectIndex = 0;
+    const selectChain = () => {
+      const result = selectResults[selectIndex++];
+      const chain = {
+        from: () => chain,
+        groupBy: () => chain,
+        limit: () => chain,
+        orderBy: () => chain,
+        // Drizzle query builders are awaitable thenables; mirror that contract in this boundary fake.
+        // eslint-disable-next-line unicorn/no-thenable
+        then: (resolve: (value: unknown) => void) => resolve(result),
+        where: () => chain,
+      };
+      return chain;
+    };
+    const tx = {
+      insert: (table: unknown) => ({
+        values: async (value: Record<string, unknown>) => {
+          inserted.set(table, [...(inserted.get(table) ?? []), value]);
+        },
+      }),
+      select: selectChain,
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    };
+    const service = new ExpertiseIngestionService(
+      {
+        transaction: async (callback: (value: typeof tx) => Promise<void>) => callback(tx),
+      } as never,
+      'user_1',
+    );
+
+    await service['persistDomainRun']({
+      agentId: 'agent_1',
+      domain: { id: 'domain_1', lessons: [] },
+      observations: [
+        {
+          example: 'Observed evidence',
+          existingCode: null,
+          layer: null,
+          outcome: 'pass',
+          reasoning: 'Evidence supports the rule',
+          title: 'Ground the conclusion in evidence',
+        },
+      ],
+      operationId: 'operation_1',
+      topicId: 'topic_1',
+    });
+
+    const run = inserted.get(expertiseRuns)?.[0];
+    const hit = inserted.get(expertiseHits)?.[0];
+    expect(run?.id).toMatch(/^exr_/);
+    expect(hit?.runId).toBe(run?.id);
   });
 });

@@ -4,6 +4,8 @@ import { ExpertiseModel } from '@/database/models/expertise';
 import { authedProcedure, router } from '@/libs/trpc/lambda';
 import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 
+import { recentLessonDelta } from './expertiseHelpers';
+
 const expertiseProcedure = authedProcedure.use(serverDatabase).use(async (opts) => {
   const { ctx } = opts;
   return opts.next({
@@ -88,8 +90,7 @@ export const expertiseRouter = router({
         const snap = snapByDomain.get(domain.id);
         const points = seriesByDomain.get(domain.id) ?? [];
         // 最近 5 次的净变化：涨=在长，跌=规则被退休（能力在退），0=练了没学到
-        const recent = points.slice(-6);
-        const delta = recent.length > 1 ? recent.at(-1)!.n - recent[0].n : 0;
+        const delta = recentLessonDelta(points);
         return {
           activeRate: snap?.activeRate ?? null,
           actors: actorsByDomain.get(domain.id) ?? [],

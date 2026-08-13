@@ -273,6 +273,7 @@ export class ExpertiseIngestionService {
         actorType: 'agent',
         completedAt: new Date(),
         domainId: input.domain.id,
+        id: runId,
         reflectionKey,
         runIndex,
         subjectId: input.topicId,
