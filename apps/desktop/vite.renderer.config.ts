@@ -238,7 +238,15 @@ export default defineConfig(async (env) => {
     },
     define: {
       ...sharedRendererDefine({ isElectron: true, isMobile: false }),
-      __MAIN_VERSION__: JSON.stringify(desktopPackageJson.version),
+      // What the About page shows. `package.json` still reads 0.0.0 here, and a
+      // distribution that stamps its release number through electron-builder's
+      // `extraMetadata.version` rewrites only the *packaged* manifest — which
+      // happens after this bundle is built. So the OS and the installer showed
+      // the real version while the app's own About page said v0.0.0. Take the
+      // same number from the environment when the build supplies one.
+      '__MAIN_VERSION__': JSON.stringify(
+        process.env.DESKTOP_APP_VERSION || desktopPackageJson.version,
+      ),
       // The renderer builds "copy link" URLs from this (electron sync selectors).
       // The main process already resolves cloud mode through the same variable,
       // so baking it here is what keeps the links the user copies pointing at the
