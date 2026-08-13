@@ -104,6 +104,10 @@ export class UpdaterManager {
 
     if (!updaterConfig.enableAppUpdate) {
       logger.info('App updates are disabled, skipping updater initialization');
+      // Record it in the state rather than leaving 'idle', so the renderer can
+      // tell "nothing to check against" apart from "ready to check" and drop the
+      // affordance instead of offering a button that can only fail.
+      this.stage = 'disabled';
       return;
     }
 
@@ -177,6 +181,13 @@ export class UpdaterManager {
    * Check for updates
    */
   public checkForUpdates = async ({ manual = false }: { manual?: boolean } = {}) => {
+    // The renderer reaches this over IPC, so `initialize()` returning early is
+    // not enough to keep a build with no feed off the network.
+    if (!updaterConfig.enableAppUpdate) {
+      logger.info('App updates are disabled, ignoring check request');
+      return;
+    }
+
     if (this.checking || this.downloading) return;
 
     this.checking = true;
@@ -427,8 +438,13 @@ export class UpdaterManager {
         provider: 'generic',
         url: feedUrl,
       });
-    } else {
-      // Fallback to GitHub when no S3 URL configured (local dev)
+    } else if (isDev) {
+      // Local development only. A packaged build must never land here: pointing
+      // a distribution at the upstream repo makes it offer another product's
+      // releases as its own updates, and reaches the network from installs that
+      // are meant to be closed. A packaged build with no UPDATE_SERVER_URL is a
+      // misconfiguration, so say so and leave the feed unset — electron-updater
+      // then fails the check loudly instead of quietly updating off-brand.
       logger.info(
         `No UPDATE_SERVER_URL configured, falling back to GitHub provider for ${this.currentChannel} channel`,
       );
@@ -440,6 +456,11 @@ export class UpdaterManager {
       });
 
       autoUpdater.allowPrerelease = this.currentChannel !== 'stable';
+    } else {
+      logger.warn(
+        'No UPDATE_SERVER_URL configured in a packaged build — update checks will fail. ' +
+          'Set UPDATE_SERVER_URL to a release feed, or DESKTOP_DISABLE_UPDATES=1 to turn updates off.',
+      );
     }
   }
 

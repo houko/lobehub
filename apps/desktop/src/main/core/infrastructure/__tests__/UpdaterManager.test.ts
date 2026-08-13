@@ -5,9 +5,15 @@ import type { App as AppCore } from '../../App';
 import { UpdaterManager } from '../UpdaterManager';
 
 // Use vi.hoisted to ensure mocks work with require()
-const { mockGetAllWindows, mockReleaseSingleInstanceLock } = vi.hoisted(() => ({
+const { mockGetAllWindows, mockReleaseSingleInstanceLock, updaterConfigState } = vi.hoisted(() => ({
   mockGetAllWindows: vi.fn().mockReturnValue([]),
   mockReleaseSingleInstanceLock: vi.fn(),
+  // Mutable so a case can describe a build with updates off, or one with no
+  // release feed configured — both of which change what may touch the network.
+  updaterConfigState: {
+    enableAppUpdate: true,
+    updateServerUrl: 'https://mock.update.server' as string | undefined,
+  },
 }));
 
 // Mock electron-log
@@ -75,14 +81,18 @@ vi.mock('@/utils/logger', () => ({
 // Mock updater configs
 vi.mock('@/modules/updater/configs', () => ({
   UPDATE_CHANNEL: 'stable',
-  UPDATE_SERVER_URL: 'https://mock.update.server',
+  get UPDATE_SERVER_URL() {
+    return updaterConfigState.updateServerUrl;
+  },
   updaterConfig: {
     app: {
       autoCheckUpdate: false,
       autoDownloadUpdate: true,
       checkUpdateInterval: 60 * 60 * 1000,
     },
-    enableAppUpdate: true,
+    get enableAppUpdate() {
+      return updaterConfigState.enableAppUpdate;
+    },
   },
 }));
 
@@ -107,6 +117,9 @@ describe('UpdaterManager', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+
+    updaterConfigState.enableAppUpdate = true;
+    updaterConfigState.updateServerUrl = 'https://mock.update.server';
 
     // Reset autoUpdater state
     (autoUpdater as any).autoDownload = false;
@@ -154,6 +167,40 @@ describe('UpdaterManager', () => {
   describe('constructor', () => {
     it('should set up electron-log for autoUpdater', () => {
       expect(autoUpdater.logger).not.toBeNull();
+    });
+  });
+
+  describe('builds that ship no update feed', () => {
+    it('reports the disabled stage instead of idle', async () => {
+      updaterConfigState.enableAppUpdate = false;
+
+      await updaterManager.initialize();
+
+      // 'idle' would tell the renderer a check is available, and it would only
+      // ever fail — there is nothing configured to check against.
+      expect(updaterManager.getUpdaterState().stage).toBe('disabled');
+    });
+
+    it('ignores a manual check rather than reaching the network', async () => {
+      updaterConfigState.enableAppUpdate = false;
+      await updaterManager.initialize();
+
+      // The renderer can call this over IPC, so initialize() returning early is
+      // not on its own enough to keep the build off the network.
+      await updaterManager.checkForUpdates({ manual: true });
+
+      expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    });
+
+    it('does not point a packaged build at the upstream repo when no feed is set', async () => {
+      updaterConfigState.updateServerUrl = undefined;
+
+      await updaterManager.initialize();
+
+      // The GitHub fallback exists for local development. Reaching it from a
+      // packaged build makes a distribution poll someone else's releases and
+      // offer them as its own updates.
+      expect(autoUpdater.setFeedURL).not.toHaveBeenCalled();
     });
   });
 

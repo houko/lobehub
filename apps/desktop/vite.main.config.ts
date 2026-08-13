@@ -108,6 +108,11 @@ export default defineConfig(async (env) => {
     },
     define: {
       ...processEnvDefine,
+      // Same trap as the two below. This one also has to reach the main process
+      // because `electron-builder.mjs` reads it independently: dropping the
+      // publish config alone leaves the updater free to call setFeedURL with the
+      // upstream repo, so a build with updates "off" still polls it.
+      'process.env.DESKTOP_DISABLE_UPDATES': JSON.stringify(process.env.DESKTOP_DISABLE_UPDATES),
       'process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS': JSON.stringify(externalNavigationHosts),
       // Same trap as OFFICIAL_CLOUD_SERVER below: the schema in `env.ts` already
       // accepted DEVICE_GATEWAY_URL, but nothing baked it in, so a packaged app

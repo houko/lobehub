@@ -24,5 +24,13 @@ export const updaterConfig = {
     autoDownloadUpdate: true,
     checkUpdateInterval: 60 * 60 * 1000, // 1 hour
   },
-  enableAppUpdate: !isDev,
+  /**
+   * `DESKTOP_DISABLE_UPDATES` is the same switch `electron-builder.mjs` reads to
+   * drop the publish config. It has to be honoured here as well: without a
+   * publish config the packaged app simply has no `app-update.yml`, which the
+   * updater then papers over by calling `setFeedURL` with the upstream GitHub
+   * repo — so the build that was meant to have updates off ends up polling
+   * somebody else's releases every hour instead.
+   */
+  enableAppUpdate: !isDev && !getDesktopEnv().DESKTOP_DISABLE_UPDATES,
 };

@@ -58,6 +58,7 @@ const envNumber = (defaultValue: number) =>
 const getRuntimeEnv = () => ({
   ...process.env,
   DESKTOP_BACKEND_PROXY_RETHROW_ERRORS: process.env.DESKTOP_BACKEND_PROXY_RETHROW_ERRORS,
+  DESKTOP_DISABLE_UPDATES: process.env.DESKTOP_DISABLE_UPDATES,
   DESKTOP_EXTERNAL_NAVIGATION_HOSTS: process.env.DESKTOP_EXTERNAL_NAVIGATION_HOSTS,
   DEVICE_GATEWAY_ENABLED: process.env.DEVICE_GATEWAY_ENABLED,
   DEVICE_GATEWAY_URL: process.env.DEVICE_GATEWAY_URL,
@@ -89,6 +90,15 @@ export const getDesktopEnv = memoize(() =>
       // Dev-only failure injection: surface backend proxy errors as uncaught
       // main-process exceptions so Electron's default dialog can be reproduced.
       DESKTOP_BACKEND_PROXY_RETHROW_ERRORS: envBoolean(false),
+
+      // Whether this build ships an update feed at all.
+      //
+      // Read by `electron-builder.mjs` to drop the publish config, and here so
+      // the main process agrees with it. A distribution with no feed of its own
+      // must not fall through to the upstream GitHub provider, which is both a
+      // phone-home an air-gapped install cannot make and an upgrade path
+      // straight off the distribution.
+      DESKTOP_DISABLE_UPDATES: envBoolean(false),
 
       DESKTOP_EXTERNAL_NAVIGATION_HOSTS: z.string().optional().default(''),
 
