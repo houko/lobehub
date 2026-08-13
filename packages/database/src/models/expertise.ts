@@ -1,5 +1,5 @@
 import { parseExpertiseDomainBrief } from '@lobechat/types';
-import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 
 import {
   expertiseBindings,
@@ -63,6 +63,7 @@ export class ExpertiseModel {
       .where(
         and(
           eq(expertiseBindings.enabled, true),
+          isNotNull(expertiseDomains.anchorChosenAt),
           or(
             eq(expertiseBindings.agentId, agentId),
             this.workspaceId
@@ -132,7 +133,13 @@ export class ExpertiseModel {
     const [row] = await this.db
       .select()
       .from(expertiseDomains)
-      .where(and(eq(expertiseDomains.id, domainId), this.scopeWhere()))
+      .where(
+        and(
+          eq(expertiseDomains.id, domainId),
+          isNotNull(expertiseDomains.anchorChosenAt),
+          this.scopeWhere(),
+        ),
+      )
       .limit(1);
     return row;
   };
@@ -340,38 +347,6 @@ export class ExpertiseModel {
       });
     });
     return id;
-  };
-
-  /**
-   * 从候选里选定一个方向。
-   *
-   * 选中的那条把自己的分层、canon、过滤器写进领域本体，但 `anchorCandidates` **原样保留** ——
-   * 领域是选择不是发现，没选的那条路要留着，否则半年后没人答得上「当时选另一个会怎样」。
-   */
-  chooseAnchor = async (domainId: string, candidateKey: string) => {
-    const domain = await this.findDomain(domainId);
-    if (!domain) return false;
-    const candidate = (domain.anchorCandidates ?? []).find((c) => c.key === candidateKey);
-    if (!candidate) return false;
-
-    await this.db
-      .update(expertiseDomains)
-      .set({
-        anchorChosenAt: new Date(),
-        anchorChosenByUserId: this.userId,
-        canonEntries: candidate.canonEntries,
-        domainFilter: candidate.domainFilter,
-        evidenceSpec: candidate.evidenceSpec ?? [],
-        flow: candidate.flow ?? [],
-        layers: candidate.layers,
-        layerSource: candidate.layerSource,
-        outOfScope: candidate.outOfScope,
-        seedState: 'seeded',
-        title: candidate.title,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(expertiseDomains.id, domainId), this.scopeWhere()));
-    return true;
   };
 
   // ========== 洞察 ==========
