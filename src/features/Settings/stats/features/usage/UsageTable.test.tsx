@@ -13,7 +13,10 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('@lobehub/icons', () => ({
+// Stubbed rather than left real because the branding-aware icon reaches the
+// product logo, and through it `@lobehub/ui/brand`, which this file's
+// deliberately narrow module stubs cannot satisfy.
+vi.mock('@/components/Branding', () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span>{provider}</span>,
 }));
 
