@@ -32,6 +32,7 @@ interface RenderFooterOptions {
   hiddenMenuKeys?: readonly string[];
   hideGitHub?: boolean;
   homeSidebar?: boolean;
+  isDevMode?: boolean;
 }
 
 let mockServerConfigState: Record<string, unknown>;
@@ -44,6 +45,7 @@ const renderFooter = async ({
   hiddenMenuKeys,
   homeSidebar = false,
   hideGitHub = true,
+  isDevMode = false,
 }: RenderFooterOptions = {}) => {
   vi.resetModules();
   analyticsTrack.mockReset();
@@ -58,7 +60,7 @@ const renderFooter = async ({
   };
   mockUserState = {
     defaultSettings: {},
-    settings: { general: { isDevMode: false } },
+    settings: { general: { isDevMode } },
   };
 
   // Partial mock so the rest of the branding surface stays real; overriding
@@ -100,7 +102,7 @@ const renderFooter = async ({
   vi.doMock('@/features/Billboard/MenuItems', () => ({
     useBillboardMenuItems: () => billboardItems,
   }));
-  vi.doMock('@/features/NavPanel', () => ({
+  vi.doMock('@/features/NavPanel/useActiveNavKey', () => ({
     useActiveNavKey: () => (homeSidebar ? 'home' : 'discover'),
   }));
   vi.doMock('@/features/User/UserPanel/ThemeButton', () => ({
@@ -181,7 +183,7 @@ afterEach(() => {
   vi.doUnmock('@/components/FeedbackModal');
   vi.doUnmock('@/features/Billboard');
   vi.doUnmock('@/features/Billboard/MenuItems');
-  vi.doUnmock('@/features/NavPanel');
+  vi.doUnmock('@/features/NavPanel/useActiveNavKey');
   vi.doUnmock('@/features/User/UserPanel/ThemeButton');
   vi.doUnmock('@/features/Workspace/WorkspaceLink');
   vi.doUnmock('@/hooks/useNavLayout');
@@ -286,7 +288,67 @@ describe('Footer help menu tracking', () => {
     expect(keys).toContain('changelog');
   }, 20000);
 
+  // Everything this menu can hold is conditional, so "all of it is gone" is a
+  // reachable state rather than a theoretical one: a distribution hides most of
+  // it, and `setting` — the entry meant to survive that — is itself dropped for
+  // a dev-mode user, who gets a dedicated settings button beside this one.
+  const ALL_OPTIONAL_KEYS = [
+    'inviteFriend',
+    'docs',
+    'feedback',
+    'discord',
+    'github',
+    'changelog',
+    'get-app',
+  ];
 
+  it('hides the help trigger when nothing is left to put in it', async () => {
+    await renderFooter({
+      enableBusinessFeatures: true,
+      hiddenMenuKeys: ALL_OPTIONAL_KEYS,
+      isDevMode: true,
+    });
+
+    // An empty popover reads as a menu that failed to load, so the button that
+    // opens it goes too.
+    expect(screen.queryByRole('button', { name: 'Help' })).not.toBeInTheDocument();
+    // The footer itself still works — dev mode puts settings next to it.
+    expect(screen.getByLabelText('Settings')).toBeInTheDocument();
+  }, 20000);
+
+  it('keeps the help trigger while a single entry survives', async () => {
+    const user = userEvent.setup();
+    await renderFooter({
+      enableBusinessFeatures: true,
+      hiddenMenuKeys: ALL_OPTIONAL_KEYS,
+    });
+
+    // Same deny-list as above; only `setting` differs, and one entry is enough.
+    await user.click(screen.getByRole('button', { name: 'Help' }));
+
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+  }, 20000);
+
+  it('opens the billboard group without a separator above it when it stands alone', async () => {
+    const user = userEvent.setup();
+    await renderFooter({
+      billboardItems: [{ key: 'billboard-promo', label: 'Promo', onClick: vi.fn() }],
+      enableBusinessFeatures: true,
+      hiddenMenuKeys: ALL_OPTIONAL_KEYS,
+      homeSidebar: true,
+      isDevMode: true,
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Help' }));
+
+    expect(await screen.findByText('Promo')).toBeInTheDocument();
+    // The rule divides the menu's own entries from the billboard's; with none of
+    // the former left it has nothing to divide.
+    const menu = screen.getByRole('menu');
+    expect(menu.querySelectorAll('[role="separator"], .lobe-dropdown-menu-separator')).toHaveLength(
+      0,
+    );
+  }, 20000);
 
   it('tracks menu open with the visible item keys', async () => {
     const user = userEvent.setup();

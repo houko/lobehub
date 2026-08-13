@@ -1,10 +1,6 @@
 'use client';
 
-import {
-  DESKTOP_APP_ENABLED,
-  FOOTER_HIDDEN_MENU_KEYS,
-  SOCIAL_URL,
-} from '@lobechat/business-const';
+import { DESKTOP_APP_ENABLED, FOOTER_HIDDEN_MENU_KEYS, SOCIAL_URL } from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import { useAnalytics } from '@lobehub/analytics/react';
 import { type MenuProps } from '@lobehub/ui';
@@ -243,13 +239,18 @@ const Footer = memo(() => {
     ];
 
     const ownItems = applyHiddenKeys(allItems);
+    const billboardItems =
+      isHomeSidebar && billboardMenuItems && billboardMenuItems.length > 0
+        ? billboardMenuItems
+        : [];
 
     return {
       helpMenuItems: [
         ...injectMenuTracking(ownItems, trackMenuClick),
-        ...(isHomeSidebar && billboardMenuItems && billboardMenuItems.length > 0
-          ? [{ type: 'divider' as const }, ...billboardMenuItems]
-          : []),
+        // The separator belongs between the two groups, so it is only earned
+        // once there is something above it to separate from.
+        ...(billboardItems.length > 0 && ownItems.length > 0 ? [{ type: 'divider' as const }] : []),
+        ...billboardItems,
       ],
       trackedMenuKeys: collectMenuKeys(ownItems),
     };
@@ -268,6 +269,15 @@ const Footer = memo(() => {
     billboardMenuItems,
     isHomeSidebar,
   ]);
+
+  /**
+   * A distribution can hide every entry the menu would have held — and the
+   * remaining `setting` entry is itself conditional, since a dev-mode user gets
+   * a dedicated settings button beside this one instead. Both together leave the
+   * trigger opening an empty popover, which reads as a menu that failed to load.
+   * Drop the trigger rather than the contents.
+   */
+  const hasHelpMenu = (helpMenuItems?.length ?? 0) > 0;
 
   const handleMenuOpenChange = useCallback(
     (open: boolean) => {
@@ -289,18 +299,20 @@ const Footer = memo(() => {
       {footer.layout === 'expanded' ? (
         <Flexbox horizontal align={'center'} gap={2} justify={'space-between'} padding={8}>
           <Flexbox horizontal align={'center'} flex={1} gap={2}>
-            <DropdownMenu
-              items={helpMenuItems}
-              placement="topLeft"
-              onOpenChange={handleMenuOpenChange}
-            >
-              <ActionIcon
-                aria-label={t('userPanel.help')}
-                data-billboard-anchor=""
-                icon={CircleHelp}
-                size={16}
-              />
-            </DropdownMenu>
+            {hasHelpMenu && (
+              <DropdownMenu
+                items={helpMenuItems}
+                placement="topLeft"
+                onOpenChange={handleMenuOpenChange}
+              >
+                <ActionIcon
+                  aria-label={t('userPanel.help')}
+                  data-billboard-anchor=""
+                  icon={CircleHelp}
+                  size={16}
+                />
+              </DropdownMenu>
+            )}
             {!footer.hideGitHub && !FOOTER_HIDDEN_MENU_KEYS.includes('github') && (
               <a aria-label={'GitHub'} href={GITHUB} rel="noopener noreferrer" target={'_blank'}>
                 <ActionIcon icon={GithubIcon} size={16} title={'GitHub'} />
@@ -314,13 +326,15 @@ const Footer = memo(() => {
         </Flexbox>
       ) : (
         <Flexbox horizontal align={'center'} gap={2} padding={8}>
-          <DropdownMenu
-            items={helpMenuItems}
-            placement="topLeft"
-            onOpenChange={handleMenuOpenChange}
-          >
-            <ActionIcon aria-label={t('userPanel.help')} icon={CircleHelp} size={16} />
-          </DropdownMenu>
+          {hasHelpMenu && (
+            <DropdownMenu
+              items={helpMenuItems}
+              placement="topLeft"
+              onOpenChange={handleMenuOpenChange}
+            >
+              <ActionIcon aria-label={t('userPanel.help')} icon={CircleHelp} size={16} />
+            </DropdownMenu>
+          )}
           {isDevMode && (
             <WorkspaceLink to="/settings">
               <ActionIcon
