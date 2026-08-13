@@ -52,7 +52,7 @@ describe('createCompletionPolicy', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('ignores runs that carry no marker payload, regardless of agent', async () => {
+  it('does not project a self-iteration receipt for an ordinary run', async () => {
     const onSelfIterationCompleted = vi.fn();
     const [handler] = installAndCapture(createCompletionPolicy({ onSelfIterationCompleted }));
 
@@ -61,6 +61,36 @@ describe('createCompletionPolicy', () => {
     });
 
     expect(onSelfIterationCompleted).not.toHaveBeenCalled();
+  });
+
+  it('ingests bounded topic context after an ordinary run completes', async () => {
+    const onTopicCompleted = vi.fn().mockResolvedValue({ ingested: 1 });
+    const [handler] = installAndCapture(createCompletionPolicy({ onTopicCompleted }));
+
+    await handler.handle({
+      payload: {
+        agentId: 'agent_user_42',
+        operationId: 'op_topic_1',
+        serializedContext: '[user] diagnose the outage',
+        topicId: 'topic_1',
+      },
+    });
+
+    expect(onTopicCompleted).toHaveBeenCalledWith({
+      agentId: 'agent_user_42',
+      operationId: 'op_topic_1',
+      serializedContext: '[user] diagnose the outage',
+      topicId: 'topic_1',
+    });
+  });
+
+  it('does not ingest a completion without a topic boundary', async () => {
+    const onTopicCompleted = vi.fn();
+    const [handler] = installAndCapture(createCompletionPolicy({ onTopicCompleted }));
+
+    await handler.handle({ payload: { agentId: 'agent_user_42', operationId: 'op_2' } });
+
+    expect(onTopicCompleted).not.toHaveBeenCalled();
   });
 
   it.each([
