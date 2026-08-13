@@ -31,6 +31,10 @@ const isDev = process.env.NODE_ENV !== 'production';
 const isMobileRuntime = isMobile || isWorkbench;
 const platform = isAuth ? 'auth' : isMobileRuntime ? 'mobile' : 'web';
 const enableViteDevTools = process.env.LOBE_VITE_DEVTOOLS === 'true';
+const orbPortalHost =
+  process.env.AMP_ORB === '1' && process.env.PUBLIC_URL
+    ? new URL(process.env.PUBLIC_URL).hostname
+    : undefined;
 
 const resolveCommandExecutable = (cmd: string) => {
   const pathValue = process.env.PATH;
@@ -342,6 +346,11 @@ export default defineConfig({
   ].filter(Boolean) as PluginOption[],
 
   server: {
+    // A portaled Orb reaches Vite through its exact authenticated onamp.dev
+    // hostname and an ephemeral E2B bridge hostname. Keep the public hostname
+    // exact, allow only the bridge's controlled suffix, and leave every
+    // non-Orb developer's existing host policy unchanged.
+    allowedHosts: orbPortalHost ? [orbPortalHost, '.e2b.app'] : undefined,
     cors: true,
     host: true,
     port: isWorkbench

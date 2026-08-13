@@ -157,5 +157,6 @@ docs/superpowers/
 # Kagura agent runtime
 .kagura/
 
-# Amp agent runtime
-.amp/
+# Amp runtime output stays local; only the repository's declarative service config is shared.
+.amp/*
+!.amp/services.yaml

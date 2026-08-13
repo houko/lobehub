@@ -121,4 +121,12 @@ pnpm install
 echo "==> Installing the Chromium runtime used by end-to-end tests"
 pnpm exec playwright install --with-deps chromium
 
+if [[ "${AMP_ORB:-}" == "1" ]]; then
+  echo "==> Starting supervised Orb services"
+  # `ensure` reads .amp/services.yaml and creates the authenticated Portal. Amp
+  # supervises declared services across pause/resume, so the resume hook does
+  # not need to start another server.
+  amp orb services ensure
+fi
+
 echo "==> Orb setup complete"

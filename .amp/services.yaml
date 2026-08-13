@@ -1,0 +1,9 @@
+# Amp injects PORT as the Portal listener. LobeHub's Vite server reads
+# SPA_PORT, while PORT remains its backend proxy target; assigning both avoids
+# proxying API requests back into the SPA server itself.
+services:
+  web-spa:
+    command: 'SPA_PORT="$PORT" PORT=3010 bun run dev:spa'
+    portal:
+      description: LobeHub Web SPA development server
+      title: LobeHub Web SPA
