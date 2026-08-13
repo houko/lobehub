@@ -47,7 +47,7 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
   // Read the shared latest-version check state (deduped by key, no extra fetch)
   // so a failed update check can surface a retry instead of silently rendering
   // nothing — which is indistinguishable from "up to date".
-  const { enableCheckUpdates } = useServerConfigStore(featureFlagsSelectors);
+  const { enableCheckUpdates, showChangelog } = useServerConfigStore(featureFlagsSelectors);
   const canAccessDevDock = useServerConfigStore((s) => s.canAccessDevDock);
   const devDockClickSequence = useRef(INITIAL_DEV_DOCK_CLICK_SEQUENCE);
   const {
@@ -111,6 +111,12 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
     const { stage, progress } = updaterState;
 
     switch (stage) {
+      case 'disabled': {
+        // This build ships no update feed, so there is nothing to check
+        // against. Offering the button anyway means the only thing it can do is
+        // fail.
+        return null;
+      }
       case 'checking': {
         return (
           <Button loading block={mobile}>
@@ -200,9 +206,17 @@ const Version = memo<{ mobile?: boolean }>(({ mobile }) => {
         </Flexbox>
       </Flexbox>
       <Flexbox horizontal flex={mobile ? 1 : undefined} gap={8}>
-        <a href={CHANGELOG_URL} rel="noreferrer" style={{ flex: 1 }} target="_blank">
-          <Button block={mobile}>{t('changelog')}</Button>
-        </a>
+        {/*
+          CHANGELOG_URL is the hosted site's, so a rebranded or self-hosted
+          deployment was linking out to another product's release notes. The
+          `changelog` feature flag already existed for exactly this and simply
+          was not wired to anything.
+        */}
+        {showChangelog && (
+          <a href={CHANGELOG_URL} rel="noreferrer" style={{ flex: 1 }} target="_blank">
+            <Button block={mobile}>{t('changelog')}</Button>
+          </a>
+        )}
         {renderUpdateButton()}
       </Flexbox>
     </Flexbox>
