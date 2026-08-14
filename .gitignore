@@ -161,4 +161,5 @@ docs/superpowers/
 /public/branding/
 
 # Amp agent runtime
-.amp/
+.amp/*
+!.amp/settings.json
