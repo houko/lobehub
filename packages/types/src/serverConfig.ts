@@ -84,6 +84,19 @@ export interface ServerModelProviderConfig {
 
 export type ServerLanguageModel = Partial<Record<GlobalLLMProviderKey, ServerModelProviderConfig>>;
 
+/**
+ * Where this deployment serves its own desktop installers, one entry per
+ * platform it publishes. Present only when at least one is configured.
+ *
+ * A deployment that builds its own client has nowhere to send users otherwise:
+ * `DOWNLOAD_URL` is the hosted site's. Delivered through server config rather
+ * than compiled in so the addresses can move without a rebuild.
+ */
+export interface DesktopDownloadUrls {
+  macOS?: string;
+  windows?: string;
+}
+
 export interface GlobalServerConfig {
   /**
    * Agent Gateway URL for WebSocket-based agent execution.
@@ -93,6 +106,7 @@ export interface GlobalServerConfig {
   agentGatewayUrl?: string;
   aiProvider: ServerLanguageModel;
   defaultAgent?: PartialDeep<UserDefaultAgent>;
+  desktopDownloads?: DesktopDownloadUrls;
   disableEmailPassword?: boolean;
   enableBusinessFeatures?: boolean;
   enableComposio?: boolean;

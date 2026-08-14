@@ -78,6 +78,23 @@ export const getAppConfig = () => {
       AGENT_GATEWAY_SERVICE_TOKEN: z.string().optional(),
       ENABLE_AGENT_GATEWAY: z.boolean().optional(),
       AGENT_GATEWAY_URL: z.string().url().optional(),
+
+      /**
+       * Where this deployment serves its own desktop installers.
+       *
+       * Env rather than a build-time constant on purpose: the URLs change
+       * whenever the release hosting moves, and a deployment should not have to
+       * rebuild its image to correct a download link. Set either one and the
+       * product's "get the desktop app" entry points resolve to this
+       * deployment's own `/downloads` page; leave both unset and nothing
+       * changes.
+       *
+       * Add a platform by adding a variable here and a field in
+       * `GlobalServerConfig['desktopDownloads']` — the page renders whatever it
+       * is given.
+       */
+      DESKTOP_DOWNLOAD_URL_MACOS: z.string().url().optional(),
+      DESKTOP_DOWNLOAD_URL_WINDOWS: z.string().url().optional(),
       /**
        * Enable Queue-based Agent Runtime
        * When true, use QStash for async agent execution (production)
@@ -124,6 +141,8 @@ export const getAppConfig = () => {
       AGENT_GATEWAY_SERVICE_TOKEN: process.env.AGENT_GATEWAY_SERVICE_TOKEN,
       ENABLE_AGENT_GATEWAY: process.env.ENABLE_AGENT_GATEWAY === '1',
       AGENT_GATEWAY_URL: process.env.AGENT_GATEWAY_URL,
+      DESKTOP_DOWNLOAD_URL_MACOS: process.env.DESKTOP_DOWNLOAD_URL_MACOS,
+      DESKTOP_DOWNLOAD_URL_WINDOWS: process.env.DESKTOP_DOWNLOAD_URL_WINDOWS,
       enableQueueAgentRuntime: process.env.AGENT_RUNTIME_MODE === 'queue',
       TELEMETRY_DISABLED: process.env.TELEMETRY_DISABLED === '1',
     },

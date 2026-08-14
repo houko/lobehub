@@ -1,10 +1,6 @@
 'use client';
 
-import {
-  CLI_CONNECT_ENABLED,
-  DESKTOP_APP_ENABLED,
-  DESKTOP_DOWNLOADS,
-} from '@lobechat/business-const';
+import { CLI_CONNECT_ENABLED, DESKTOP_APP_ENABLED } from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import type {
   HeterogeneousAgentScanStatus,
@@ -38,9 +34,9 @@ import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from 
 import { useTranslation } from 'react-i18next';
 
 import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
-import { DOWNLOAD_URL } from '@/const/url';
 import { getDeviceIcon } from '@/features/DeviceManager/getDeviceIcon';
 import { useDeviceList } from '@/features/DeviceManager/useDeviceList';
+import { useDesktopDownload } from '@/features/Downloads/useDesktopDownload';
 import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { deviceService } from '@/services/device';
 import { useAgentStore } from '@/store/agent';
@@ -388,6 +384,10 @@ const ConnectAgentContent = memo<ConnectAgentContentProps>(
   ({ groupId, onTitleChange, visibility }) => {
     const { t } = useTranslation('chat');
     const { close, setCanDismissByClickOutside } = useModalContext();
+    // Two conditions, not one: the distribution has to ship a desktop client at
+    // all, and this deployment has to have somewhere to send people for it.
+    const desktopDownload = useDesktopDownload();
+    const showDesktopOption = DESKTOP_APP_ENABLED && desktopDownload.available;
     const navigate = useWorkspaceAwareNavigate();
     const storeCreateAgent = useAgentStore((s) => s.createAgent);
     const currentDeviceId = useElectronStore((s) => s.gatewayDeviceInfo?.deviceId);
@@ -644,9 +644,9 @@ const ConnectAgentContent = memo<ConnectAgentContentProps>(
                 is dropped whole rather than left as an empty frame under the
                 hero.
               */}
-              {(DESKTOP_APP_ENABLED || CLI_CONNECT_ENABLED) && (
+              {(showDesktopOption || CLI_CONNECT_ENABLED) && (
                 <div className={styles.emptyOptions}>
-                  {DESKTOP_APP_ENABLED && (
+                  {showDesktopOption && (
                     <div className={styles.emptyOption}>
                       <span className={styles.emptyOptionIcon}>
                         <Icon icon={Download} size={20} />
@@ -658,14 +658,7 @@ const ConnectAgentContent = memo<ConnectAgentContentProps>(
                         </Text>
                       </Flexbox>
                       <div className={styles.emptyOptionAction}>
-                        {/* A distribution that publishes its own builds serves
-                            them from its own /downloads; only fall through to
-                            the hosted site when there is no such list. */}
-                        <a
-                          rel={'noreferrer'}
-                          target={'_blank'}
-                          href={DESKTOP_DOWNLOADS.length > 0 ? '/downloads' : DOWNLOAD_URL.default}
-                        >
+                        <a href={desktopDownload.href} rel={'noreferrer'} target={'_blank'}>
                           <Button
                             icon={<Icon icon={Download} size={14} />}
                             style={{ width: '100%' }}

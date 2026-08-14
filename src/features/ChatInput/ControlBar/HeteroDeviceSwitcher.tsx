@@ -20,11 +20,11 @@ import { memo, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import InstantSwitch from '@/components/InstantSwitch';
-import { DOWNLOAD_URL } from '@/const/url';
 import { useChatInputResourceAccess } from '@/features/ChatInput/hooks/useChatInputResourceAccess';
 import { useLocalSandboxCapability } from '@/features/ChatInput/hooks/useLocalSandboxCapability';
 import { useSelectExecutionTarget } from '@/features/ChatInput/hooks/useSelectExecutionTarget';
 import { useDeviceList } from '@/features/DeviceManager/useDeviceList';
+import { useDesktopDownload } from '@/features/Downloads/useDesktopDownload';
 import {
   ExecutionTargetDeviceStatus,
   ExecutionTargetIcon,
@@ -563,6 +563,10 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
     isWorkspacePreferenceLoading,
   ]);
 
+  // Above the early return: hooks have to run in the same order every render,
+  // and `canShowExecutionTarget` is not constant across them.
+  const desktopDownload = useDesktopDownload();
+
   if (!canShowExecutionTarget) return null;
 
   const boundDevice =
@@ -610,13 +614,19 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
   // enroll hint instead: downloading the desktop app wouldn't help until the
   // machine is enrolled into the workspace pool.
   const showWebDownloadCard =
-    DESKTOP_APP_ENABLED && !isDesktop && !isWorkspaceAgent && hasNoDevices && !isLoading;
+    DESKTOP_APP_ENABLED &&
+    desktopDownload.available &&
+    !isDesktop &&
+    !isWorkspaceAgent &&
+    hasNoDevices &&
+    !isLoading;
   const showWorkspaceEnrollHint = isWorkspaceAgent && hasNoDevices && !isLoading;
   // The header is an either/or: no download card means the small download link
   // takes its place. Gating only the card would therefore *reveal* the link on a
   // distribution that ships no desktop build — so decide the link explicitly
   // rather than letting it inherit the card's absence.
-  const showHeaderDownloadLink = DESKTOP_APP_ENABLED && !isDesktop && !showWebDownloadCard;
+  const showHeaderDownloadLink =
+    DESKTOP_APP_ENABLED && desktopDownload.available && !isDesktop && !showWebDownloadCard;
 
   // Compute chip
   let chipIcon: ReactNode = <ExecutionTargetIcon target={'sandbox'} />;
@@ -698,7 +708,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
         {showHeaderDownloadLink ? (
           <a
             className={styles.headerLink}
-            href={DOWNLOAD_URL.default}
+            href={desktopDownload.href}
             rel="noreferrer"
             target="_blank"
           >
@@ -860,7 +870,7 @@ const HeteroDeviceSwitcher = memo<HeteroDeviceSwitcherProps>(({ agentId }) => {
       {showWebDownloadCard ? (
         <a
           className={styles.downloadCard}
-          href={DOWNLOAD_URL.default}
+          href={desktopDownload.href}
           rel="noreferrer"
           target="_blank"
         >

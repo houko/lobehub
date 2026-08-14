@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 
 import AsyncBoundary from '@/components/AsyncBoundary';
 import SharedListSkeleton from '@/components/ListSkeleton';
+import { useDesktopDownload } from '@/features/Downloads/useDesktopDownload';
 import { useElectronStore } from '@/store/electron';
 
 import DeviceDetailPanel from './DeviceDetailPanel';
@@ -284,6 +285,11 @@ const DeviceManager = memo<DeviceManagerProps>(({ onConnect, scope, visibility }
   const { t } = useTranslation('setting');
   const isWorkspace = scope === 'workspace';
 
+  // Two conditions, not one: the distribution has to ship a desktop client at
+  // all, and this deployment has to have somewhere to send people for it.
+  const desktopDownload = useDesktopDownload();
+  const showDesktopOption = DESKTOP_APP_ENABLED && desktopDownload.available;
+
   // Workspace-keyed SWR fetch — the shared hook every device-listing surface
   // uses (see `useDeviceList` for why the raw TRPC React Query path is wrong).
   const { data, isLoading, error, mutate, isValidating } = useDeviceList();
@@ -340,14 +346,14 @@ const DeviceManager = memo<DeviceManagerProps>(({ onConnect, scope, visibility }
         </Flexbox>
 
         {/*
-          A distribution may publish neither the desktop build nor the CLI, and
-          then there is no way to enrol a device at all. Offering the methods
-          anyway leads to a wizard whose own step is gated off, so the grid goes
-          rather than becoming an empty frame under the hero.
+          A deployment may offer neither the desktop build nor the CLI, and then
+          there is no way to enrol a device at all. Offering the methods anyway
+          leads to a wizard whose own step is gated off, so the grid goes rather
+          than becoming an empty frame under the hero.
         */}
-        {!isWorkspace && (DESKTOP_APP_ENABLED || CLI_CONNECT_ENABLED) && (
+        {!isWorkspace && (showDesktopOption || CLI_CONNECT_ENABLED) && (
           <div className={styles.optionGrid}>
-            {DESKTOP_APP_ENABLED && (
+            {showDesktopOption && (
               <ConnectOption
                 badge={t('devices.empty.methodDesktop.badge')}
                 desc={t('devices.empty.methodDesktop.desc')}
@@ -404,7 +410,7 @@ const DeviceManager = memo<DeviceManagerProps>(({ onConnect, scope, visibility }
                 {/* Same reasoning as the empty state's method cards: with no
                     enrolment route published, the wizard this opens has no
                     completable step. */}
-                {(DESKTOP_APP_ENABLED || CLI_CONNECT_ENABLED) && (
+                {(showDesktopOption || CLI_CONNECT_ENABLED) && (
                   <Button
                     icon={<Icon icon={MonitorUpIcon} />}
                     size={'small'}

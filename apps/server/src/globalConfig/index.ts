@@ -137,6 +137,18 @@ export const getServerGlobalConfig = async () => {
     // Expose Agent Gateway URL to client (used by hetero agents; also required for queue mode)
     ...(appEnv.AGENT_GATEWAY_URL ? { agentGatewayUrl: appEnv.AGENT_GATEWAY_URL } : undefined),
 
+    // Where this deployment serves its own installers. Omitted entirely when
+    // none are configured, so the client can tell "we publish builds" from
+    // "we publish none" without a second flag.
+    ...(appEnv.DESKTOP_DOWNLOAD_URL_MACOS || appEnv.DESKTOP_DOWNLOAD_URL_WINDOWS
+      ? {
+          desktopDownloads: cleanObject({
+            macOS: appEnv.DESKTOP_DOWNLOAD_URL_MACOS,
+            windows: appEnv.DESKTOP_DOWNLOAD_URL_WINDOWS,
+          }),
+        }
+      : undefined),
+
     image: cleanObject({
       defaultImageNum: imageEnv.AI_IMAGE_DEFAULT_IMAGE_NUM,
     }),

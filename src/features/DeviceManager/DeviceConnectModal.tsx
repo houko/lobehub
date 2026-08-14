@@ -1,7 +1,6 @@
 'use client';
 
 import { DESKTOP_APP_ENABLED } from '@lobechat/business-const';
-import { DOWNLOAD_URL } from '@lobechat/const';
 import type { DeviceScope, DeviceVisibility } from '@lobechat/types';
 import { CopyButton, Flexbox, Icon, Text } from '@lobehub/ui';
 import { Button, Tabs } from '@lobehub/ui/base-ui';
@@ -12,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useActiveWorkspaceId } from '@/business/client/hooks/useActiveWorkspaceId';
 import ImperativeModal from '@/components/ImperativeModal';
+import { useDesktopDownload } from '@/features/Downloads/useDesktopDownload';
 
 const styles = createStaticStyles(({ css }) => ({
   codeBlock: css`
@@ -129,7 +129,8 @@ const DeviceConnectModal = memo<DeviceConnectModalProps>(
     // With no desktop build to download there is nothing left in it, so drop the
     // tab rather than leave a step-1 that cannot be completed — CLI enrollment
     // then stands alone, exactly as it already does for workspace devices.
-    const showDesktopTab = DESKTOP_APP_ENABLED && !isWorkspace;
+    const desktopDownload = useDesktopDownload();
+    const showDesktopTab = DESKTOP_APP_ENABLED && desktopDownload.available && !isWorkspace;
 
     const [active, setActive] = useState<'cli' | 'desktop'>(
       showDesktopTab ? (initialTab ?? 'desktop') : 'cli',
@@ -218,7 +219,7 @@ const DeviceConnectModal = memo<DeviceConnectModalProps>(
                 index={1}
                 title={t('devices.connectWizard.desktop.step1')}
               >
-                <a href={DOWNLOAD_URL.default} rel="noreferrer" target="_blank">
+                <a href={desktopDownload.href} rel="noreferrer" target="_blank">
                   <Button icon={<Icon icon={DownloadIcon} />} type={'primary'}>
                     {t('devices.connectWizard.desktop.downloadLink')}
                   </Button>
