@@ -7,7 +7,7 @@ import {
   trackOnboardingStepCompleted,
 } from '@/services/onboardingMetrics';
 import { useUserStore } from '@/store/user';
-import { consumeOnboardingCallbackUrl } from '@/utils/onboardingRedirect';
+import { resolvePostOnboardingTargetUrl } from '@/utils/onboardingRedirect';
 
 /**
  * Mark onboarding finished and leave for wherever the user was originally
@@ -32,8 +32,9 @@ export const useFinishOnboarding = (flow: Exclude<OnboardingFlow, 'common'>) => 
 
       if (stepPayload) trackOnboardingStepCompleted(stepPayload);
 
-      // Restore the original signup target (threaded through onboarding), if any.
-      const targetUrl = consumeOnboardingCallbackUrl() || '/';
+      // Restore the original signup target (threaded through onboarding), if
+      // any; otherwise land where a freshly onboarded user should start.
+      const targetUrl = resolvePostOnboardingTargetUrl();
       trackOnboardingCompleted({ flow, targetUrl });
       navigate(targetUrl);
     },

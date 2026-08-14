@@ -1,15 +1,21 @@
+import type * as BusinessConst from '@lobechat/business-const';
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PortalViewType } from '@/store/chat/slices/portal/initialState';
 
 interface RenderHomeOptions {
   isLogin?: boolean;
   portalViewType?: PortalViewType;
+  portraitEnabled?: boolean;
+  search?: string;
   showHomePortrait?: boolean;
 }
 
 const stub = (testId: string) => ({ default: () => <div data-testid={testId} /> });
+const modeStub = (testId: string) => ({
+  default: ({ mode }: { mode?: string }) => <div data-mode={mode} data-testid={testId} />,
+});
 
 function translate() {
   return { i18n: { language: 'en-US' }, t: (key: string) => key };
@@ -18,15 +24,26 @@ function translate() {
 const renderHome = async ({
   isLogin = true,
   portalViewType,
+  portraitEnabled = true,
+  search = '',
   showHomePortrait,
 }: RenderHomeOptions = {}) => {
   vi.resetModules();
+  window.history.replaceState(null, '', `/${search}`);
 
+  // Partial mock so the rest of the branding surface stays real. The portrait
+  // is artwork a distribution may not ship, and the cases below assert on it
+  // either way, so each states which side of that switch it is describing
+  // rather than inheriting whatever this build happens to be.
+  vi.doMock('@lobechat/business-const', async (importOriginal) => ({
+    ...(await importOriginal<typeof BusinessConst>()),
+    HOME_PORTRAIT_ENABLED: portraitEnabled,
+  }));
   vi.doMock('react-i18next', () => ({ useTranslation: translate }));
   vi.doMock('../HomeHeader', () => stub('home-header'));
-  vi.doMock('../HomeModeContent', () => stub('home-mode-content'));
+  vi.doMock('../HomeModeContent', () => modeStub('home-mode-content'));
   vi.doMock('../HomePortrait', () => stub('home-portrait'));
-  vi.doMock('../InputArea', () => stub('home-input-area'));
+  vi.doMock('../InputArea', () => modeStub('home-input-area'));
   vi.doMock('../PortraitBubble', () => stub('portrait-bubble'));
   vi.doMock('../AcceptancePortalDrawer', () => stub('acceptance-portal-drawer'));
   vi.doMock('@/features/HomeInbox', () => stub('home-inbox'));
@@ -55,8 +72,23 @@ const renderHome = async ({
   render(<Home />);
 };
 
+/**
+ * Pay the module graph's first-import cost once, outside any test's clock.
+ *
+ * Home pulls in a wide graph, and transforming it cold takes longer than the
+ * per-test timeout on its own — enough that whichever test happens to run first
+ * times out while every test after it passes on the warm cache. That reads as a
+ * flaky assertion in one test rather than a fixed cost paid by whoever goes
+ * first, so it is paid here instead.
+ */
+beforeAll(async () => {
+  await import('../index');
+}, 120_000);
+
 afterEach(() => {
   cleanup();
+  window.history.replaceState(null, '', '/');
+  vi.doUnmock('@lobechat/business-const');
   vi.doUnmock('react-i18next');
   vi.doUnmock('../HomeHeader');
   vi.doUnmock('../HomeModeContent');
@@ -86,6 +118,15 @@ describe('Home portrait visibility', () => {
     expect(screen.getByTestId('portrait-bubble')).toBeInTheDocument();
   }, 20000);
 
+  it('shows no portrait where the distribution ships none, whatever the preference', async () => {
+    await renderHome({ portraitEnabled: false, showHomePortrait: true });
+
+    // The switch outranks the stored preference deliberately: with no artwork
+    // to show, honouring "portrait on" would leave a gap where it used to be.
+    expect(screen.queryByTestId('home-portrait')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('portrait-bubble')).not.toBeInTheDocument();
+  }, 20000);
+
   it('takes the bubble down with the portrait when the preference is off', async () => {
     await renderHome({ showHomePortrait: false });
 
@@ -99,6 +140,21 @@ describe('Home portrait visibility', () => {
     expect(screen.getByTestId('home-header')).toBeInTheDocument();
     expect(screen.getByTestId('home-main')).toBeInTheDocument();
     expect(screen.getByTestId('home-rail')).toBeInTheDocument();
+  }, 20000);
+
+  it('opens the home dashboard in chat mode by default', async () => {
+    await renderHome();
+
+    expect(screen.getByTestId('home-input-area')).toHaveAttribute('data-mode', 'chat');
+    expect(screen.getByTestId('home-mode-content')).toHaveAttribute('data-mode', 'chat');
+  }, 20000);
+
+  it('opens the home dashboard in task mode for the post-onboarding entry', async () => {
+    await renderHome({ search: '?onboarding=task' });
+
+    expect(screen.getByTestId('home-input-area')).toHaveAttribute('data-mode', 'task');
+    expect(screen.getByTestId('home-mode-content')).toHaveAttribute('data-mode', 'task');
+    expect(window.location.search).toBe('');
   }, 20000);
 
   it('shows no portrait to a signed-out visitor even with the preference on', async () => {

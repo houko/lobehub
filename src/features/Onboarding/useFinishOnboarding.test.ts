@@ -6,7 +6,10 @@ import { useFinishOnboarding } from './useFinishOnboarding';
 
 const navigate = vi.fn();
 const finishOnboarding = vi.fn().mockResolvedValue(undefined);
-const consumeOnboardingCallbackUrl = vi.fn();
+const resolvePostOnboardingTargetUrl = vi.fn();
+
+/** Where a freshly onboarded user lands with no stashed signup target. */
+const DEFAULT_TARGET = '/?onboarding=task';
 
 const metrics = vi.hoisted(() => ({
   trackOnboardingCompleted: vi.fn(),
@@ -26,13 +29,14 @@ vi.mock('@/store/user', () => ({
 }));
 
 vi.mock('@/utils/onboardingRedirect', () => ({
-  consumeOnboardingCallbackUrl: () => consumeOnboardingCallbackUrl(),
+  resolvePostOnboardingTargetUrl: () => resolvePostOnboardingTargetUrl(),
 }));
 
 beforeEach(() => {
   navigate.mockClear();
   finishOnboarding.mockClear();
-  consumeOnboardingCallbackUrl.mockReset();
+  resolvePostOnboardingTargetUrl.mockReset();
+  resolvePostOnboardingTargetUrl.mockReturnValue(DEFAULT_TARGET);
   metrics.trackOnboardingCompleted.mockClear();
   metrics.trackOnboardingStepCompleted.mockClear();
 });
@@ -49,7 +53,7 @@ describe('useFinishOnboarding', () => {
     await act(() => result.current());
 
     expect(order).toEqual(['finish', 'navigate']);
-    expect(navigate).toHaveBeenCalledWith('/');
+    expect(navigate).toHaveBeenCalledWith(DEFAULT_TARGET);
   });
 
   it('emits the step event between the store write and the completion event', async () => {
@@ -71,12 +75,12 @@ describe('useFinishOnboarding', () => {
     expect(metrics.trackOnboardingStepCompleted).not.toHaveBeenCalled();
     expect(metrics.trackOnboardingCompleted).toHaveBeenCalledWith({
       flow: 'agent',
-      targetUrl: '/',
+      targetUrl: DEFAULT_TARGET,
     });
   });
 
   it('restores the stashed signup target', async () => {
-    consumeOnboardingCallbackUrl.mockReturnValue('/chat?topic=abc');
+    resolvePostOnboardingTargetUrl.mockReturnValue('/chat?topic=abc');
 
     const { result } = renderHook(() => useFinishOnboarding('classic'));
     await act(() => result.current());
