@@ -6,8 +6,11 @@ import { Block, Flexbox, Icon, Text } from '@lobehub/ui';
 import { Button } from '@lobehub/ui/base-ui';
 import { createStaticStyles } from 'antd-style';
 import { AppleIcon, DownloadIcon, MonitorIcon } from 'lucide-react';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import type { DownloadPlatform } from './orderDownloadPlatforms';
+import { orderDownloadPlatforms } from './orderDownloadPlatforms';
 
 const styles = createStaticStyles(({ css }) => ({
   page: css`
@@ -20,11 +23,10 @@ const styles = createStaticStyles(({ css }) => ({
   `,
 }));
 
-/** Platforms in the order they are offered, paired with how to label them. */
-const PLATFORMS = [
-  { icon: MonitorIcon, key: 'windows', label: 'Windows' },
-  { icon: AppleIcon, key: 'macOS', label: 'macOS' },
-] as const satisfies readonly { icon: unknown; key: keyof DesktopDownloadUrls; label: string }[];
+const PLATFORM_META: Record<DownloadPlatform, { icon: typeof AppleIcon; label: string }> = {
+  macOS: { icon: AppleIcon, label: 'macOS' },
+  windows: { icon: MonitorIcon, label: 'Windows' },
+};
 
 interface DistributionDownloadsProps {
   urls: DesktopDownloadUrls;
@@ -38,12 +40,16 @@ interface DistributionDownloadsProps {
  * from the hosted site, so a self-hosted build showing it offers most of a
  * product it does not ship.
  *
- * Only platforms the deployment has actually configured appear — a build that
- * exists for Windows and not macOS should say so by omission rather than by
- * offering a link that 404s.
+ * Only platforms the deployment has actually configured appear, and the
+ * visitor's own comes first — see `orderDownloadPlatforms`.
  */
 const DistributionDownloads = memo<DistributionDownloadsProps>(({ urls }) => {
   const { t } = useTranslation('common');
+
+  const platforms = useMemo(
+    () => orderDownloadPlatforms(urls, typeof navigator === 'undefined' ? '' : navigator.userAgent),
+    [urls],
+  );
 
   return (
     <Flexbox className={styles.page} gap={24}>
@@ -52,17 +58,17 @@ const DistributionDownloads = memo<DistributionDownloadsProps>(({ urls }) => {
       </Text>
 
       <Flexbox gap={12}>
-        {PLATFORMS.filter((platform) => urls[platform.key]).map((platform) => (
-          <Block className={styles.row} key={platform.key} variant={'outlined'}>
+        {platforms.map((platform) => (
+          <Block className={styles.row} key={platform} variant={'outlined'}>
             <Flexbox horizontal align={'center'} gap={16} justify={'space-between'}>
               <Flexbox horizontal align={'center'} gap={12}>
-                <Icon icon={platform.icon} size={22} />
-                <Text weight={500}>{platform.label}</Text>
+                <Icon icon={PLATFORM_META[platform].icon} size={22} />
+                <Text weight={500}>{PLATFORM_META[platform].label}</Text>
               </Flexbox>
               {/* A plain link rather than fetch-then-save: the file comes from
                   our own origin, and the browser's own download UI is the one
                   the user can pause, resume and find again afterwards. */}
-              <a download href={urls[platform.key]} rel={'noreferrer'}>
+              <a download href={urls[platform]} rel={'noreferrer'}>
                 <Button icon={<Icon icon={DownloadIcon} size={14} />} type={'primary'}>
                   {t('download', { defaultValue: 'Download' })}
                 </Button>
