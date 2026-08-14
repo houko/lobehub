@@ -56,6 +56,21 @@ export const EXTERNAL_INTEGRATIONS_ENABLED = true;
 export const DESKTOP_APP_ENABLED = true;
 
 /**
+ * Whether this distribution reaches the hosted skill marketplace.
+ *
+ * Governs the prompt, not a button. The activator's `<skill_store_discovery>`
+ * block teaches the model to recognise `lobehub.com/skills/…` URLs and route
+ * them to `importFromMarket` — so on a deployment with no marketplace the model
+ * is told about an address it cannot use, and repeats that address back to the
+ * user in its replies. UI gating cannot reach that: the link is something the
+ * model writes, not something the app renders.
+ *
+ * Same reasoning as EXTERNAL_INTEGRATIONS_ENABLED: don't describe a capability
+ * to the model that this deployment does not have.
+ */
+export const SKILL_MARKETPLACE_ENABLED = true;
+
+/**
  * Whether this distribution offers the CLI as a way to enrol a device.
  *
  * The `lh connect` flow installs the first-party CLI from the public npm

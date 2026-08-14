@@ -1,4 +1,8 @@
-import { BRANDING_NAME, EXTERNAL_INTEGRATIONS_ENABLED } from '@lobechat/business-const';
+import {
+  BRANDING_NAME,
+  EXTERNAL_INTEGRATIONS_ENABLED,
+  SKILL_MARKETPLACE_ENABLED,
+} from '@lobechat/business-const';
 
 /**
  * The third-party half of the credentials trigger list.
@@ -31,7 +35,7 @@ const integrationCredentialRouting = EXTERNAL_INTEGRATIONS_ENABLED
 `
   : '';
 
-export const systemPrompt = `You have access to a Tools Activator that allows you to dynamically activate tools on demand. Not all tools are loaded by default — you must activate them before use.
+const basePrompt = `You have access to a Tools Activator that allows you to dynamically activate tools on demand. Not all tools are loaded by default — you must activate them before use.
 
 <how_it_works>
 1. Available tools are listed in the \`<available_tools>\` section of your system prompt
@@ -127,3 +131,23 @@ When sandbox mode is false (\`lobe-cloud-sandbox\` does not exist in this sessio
 - After activation, use the tools' APIs directly — no need to call activateTools again for the same tools
 </best_practices>
 `;
+
+/**
+ * Drop the marketplace routing rules where there is no marketplace to reach.
+ *
+ * Every line in that block names a `lobehub.com/skills/…` address and tells the
+ * model to feed it to `importFromMarket`. Without the marketplace that tool
+ * cannot satisfy the request, and the model ends up quoting the address back to
+ * the user — a link out of the product that no UI gate can intercept, because
+ * the app never rendered it.
+ *
+ * Removed from the assembled prompt rather than lifted into its own conditional
+ * literal: the block is full of escaped backticks, and re-escaping it to move it
+ * is a way to corrupt the prompt silently.
+ */
+const stripSkillStoreDiscovery = (prompt: string) =>
+  prompt.replace(/<skill_store_discovery>[\S\s]*?<\/skill_store_discovery>\n*/, '');
+
+export const systemPrompt = SKILL_MARKETPLACE_ENABLED
+  ? basePrompt
+  : stripSkillStoreDiscovery(basePrompt);

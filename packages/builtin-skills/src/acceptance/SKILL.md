@@ -260,9 +260,13 @@ URL. Put no images, local paths, local file links, or internal run-page paths in
 the chat reply.
 
 ```text
-Acceptance:   https://app.lobehub.com/acceptance/<acceptanceId>
+Acceptance:   /acceptance/<acceptanceId>
 Coverage: 2/2 criteria, all required evidence uploaded
 ```
+
+Give the path, not a full URL. The reply is rendered inside the app, where a
+relative path resolves against whatever origin the user is already on — a
+hard-coded host is wrong for every deployment except the one it names.
 
 ## Portability rules
 

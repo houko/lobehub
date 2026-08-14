@@ -7,6 +7,7 @@ import { Trans, useTranslation } from 'react-i18next';
 
 import { MORE_FILE_PREVIEW_REQUEST_URL } from '@/const/url';
 import { downloadFile } from '@/utils/client/downloadFile';
+import { vendorLink } from '@/utils/vendorLink';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   page: css`
@@ -43,7 +44,7 @@ const NotSupport: ComponentType<NotSupportProps> = ({ fileName, url, style }) =>
                 <span key="0" />,
                 <a
                   aria-label={'todo'}
-                  href={MORE_FILE_PREVIEW_REQUEST_URL}
+                  href={vendorLink(MORE_FILE_PREVIEW_REQUEST_URL)}
                   key="1"
                   rel="noreferrer"
                   target="_blank"

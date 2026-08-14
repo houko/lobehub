@@ -5,6 +5,7 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ProductLogo } from '@/components/Branding';
+import { isCustomBranding } from '@/const/version';
 import UserAvatar from '@/features/User/UserAvatar';
 
 import AiHeatmaps from '../../visualization/AiHeatmaps';
@@ -136,7 +137,17 @@ const Preview = memo(() => {
               <TotalTokens inShare />
             </Grid>
           </Flexbox>
-          <div className={styles.footer}>{OFFICIAL_URL}</div>
+          {/* The watermark on an image the user exports and sends onward, so
+              it has to name where the image actually came from. OFFICIAL_URL is
+              the vendor's host; on a rebranded build the deployment's own origin
+              is the only honest answer, and there is no origin at build time. */}
+          <div className={styles.footer}>
+            {isCustomBranding
+              ? typeof window === 'undefined'
+                ? ''
+                : window.location.origin
+              : OFFICIAL_URL}
+          </div>
         </Center>
       </div>
     </div>

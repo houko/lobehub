@@ -9,6 +9,7 @@ import Balancer from 'react-wrap-balancer';
 import { GITHUB_ISSUES } from '@/const/url';
 import { githubService } from '@/services/github';
 import { type ErrorShape } from '@/types/importer';
+import { vendorLink } from '@/utils/vendorLink';
 
 interface ErrorProps {
   error?: ErrorShape;
@@ -47,7 +48,7 @@ const Error = memo<ErrorProps>(({ error, onClick }) => {
               <span key="0" />,
               <a
                 aria-label={'issue'}
-                href={GITHUB_ISSUES}
+                href={vendorLink(GITHUB_ISSUES)}
                 key="1"
                 rel="noreferrer"
                 target="_blank"

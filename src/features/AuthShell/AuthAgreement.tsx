@@ -7,6 +7,7 @@ import { memo, useCallback, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
 import { PRIVACY_URL, TERMS_URL } from '@/const/url';
+import { vendorLink } from '@/utils/vendorLink';
 
 /**
  * Remembers that the user already accepted the terms & privacy policy on this
@@ -70,6 +71,24 @@ interface AgreementTextProps {
 type ContinueWithAgreement = () => void;
 type RequestAgreementConfirmation = (onConfirm: ContinueWithAgreement) => void;
 
+/**
+ * The label, linked where this build has a page to link to.
+ *
+ * A deployment that publishes no terms of its own must not point at the
+ * vendor's: agreeing to somebody else's terms under our branding is worse than
+ * naming them without a link. `Trans` still needs an element for the tag, so
+ * this degrades to a span rather than disappearing and breaking the sentence.
+ */
+const LegalLabel = memo<{ href?: string; label: string }>(({ href, label }) =>
+  href ? (
+    <a className={styles.link} href={href} rel="noopener noreferrer" target="_blank">
+      {label}
+    </a>
+  ) : (
+    <span>{label}</span>
+  ),
+);
+
 const AgreementText = memo<AgreementTextProps>(({ i18nKey }) => {
   const { t: translate } = useTranslation('auth');
 
@@ -78,16 +97,8 @@ const AgreementText = memo<AgreementTextProps>(({ i18nKey }) => {
       i18nKey={i18nKey}
       ns={'auth'}
       components={{
-        privacy: (
-          <a className={styles.link} href={PRIVACY_URL} rel="noopener noreferrer" target="_blank">
-            {translate('footer.privacy')}
-          </a>
-        ),
-        terms: (
-          <a className={styles.link} href={TERMS_URL} rel="noopener noreferrer" target="_blank">
-            {translate('footer.terms')}
-          </a>
-        ),
+        privacy: <LegalLabel href={vendorLink(PRIVACY_URL)} label={translate('footer.privacy')} />,
+        terms: <LegalLabel href={vendorLink(TERMS_URL)} label={translate('footer.terms')} />,
       }}
     />
   );

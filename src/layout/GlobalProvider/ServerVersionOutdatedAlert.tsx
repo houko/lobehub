@@ -12,6 +12,7 @@ import { CURRENT_VERSION } from '@/const/version';
 import { useElectronStore } from '@/store/electron';
 import { electronSyncSelectors } from '@/store/electron/selectors';
 import { useGlobalStore } from '@/store/global';
+import { vendorLink } from '@/utils/vendorLink';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   closeButton: css`
@@ -122,7 +123,7 @@ const ServerVersionOutdatedAlert = () => {
           <div className={styles.warning}>{t('serverVersionOutdated.warning')}</div>
 
           <Flexbox horizontal gap={8} justify="flex-end" style={{ marginTop: 8 }}>
-            <a href={MANUAL_UPGRADE_URL} rel="noreferrer" target="_blank">
+            <a href={vendorLink(MANUAL_UPGRADE_URL)} rel="noreferrer" target="_blank">
               <Button size="small" type="primary">
                 {t('serverVersionOutdated.upgrade')}
               </Button>
