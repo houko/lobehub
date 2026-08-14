@@ -28,11 +28,13 @@ vi.mock('@lobehub/ui', () => ({
   ),
 }));
 
-vi.mock('@lobehub/ui/icons', () => ({
+vi.mock('@lobehub/ui/icons', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   BotPromptIcon: () => null,
 }));
 
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   MessageSquarePlusIcon: () => null,
   MessagesSquareIcon: () => null,
   SearchIcon: () => null,
