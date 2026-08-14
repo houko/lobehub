@@ -55,6 +55,28 @@ export const EXTERNAL_INTEGRATIONS_ENABLED = true;
  */
 export const DESKTOP_APP_ENABLED = true;
 
+export interface DesktopDownload {
+  /** Second line — an OS requirement, an architecture, an installer size. */
+  hint?: string;
+  /** First line, e.g. "Windows 10/11 (x64)". Written by the distribution, so
+   *  it is not translated: there is no key to look it up under. */
+  name: string;
+  url: string;
+}
+
+/**
+ * Installers this distribution publishes, listed on `/downloads`.
+ *
+ * The upstream page there advertises builds, mobile apps and messenger
+ * channels served from the hosted site — none of which a self-hosted build
+ * ships. Filling this in replaces that page with a plain list of the files
+ * this deployment actually serves; leaving it empty keeps upstream's.
+ *
+ * Point each `url` at a **stable** path rather than a versioned filename, so
+ * publishing a new build is an upload rather than a code change and a release.
+ */
+export const DESKTOP_DOWNLOADS: readonly DesktopDownload[] = [];
+
 /**
  * Whether this distribution offers the CLI as a way to enrol a device.
  *

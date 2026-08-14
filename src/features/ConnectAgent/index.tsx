@@ -1,6 +1,10 @@
 'use client';
 
-import { CLI_CONNECT_ENABLED, DESKTOP_APP_ENABLED } from '@lobechat/business-const';
+import {
+  CLI_CONNECT_ENABLED,
+  DESKTOP_APP_ENABLED,
+  DESKTOP_DOWNLOADS,
+} from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import type {
   HeterogeneousAgentScanStatus,
@@ -654,7 +658,14 @@ const ConnectAgentContent = memo<ConnectAgentContentProps>(
                         </Text>
                       </Flexbox>
                       <div className={styles.emptyOptionAction}>
-                        <a href={DOWNLOAD_URL.default} rel={'noreferrer'} target={'_blank'}>
+                        {/* A distribution that publishes its own builds serves
+                            them from its own /downloads; only fall through to
+                            the hosted site when there is no such list. */}
+                        <a
+                          rel={'noreferrer'}
+                          target={'_blank'}
+                          href={DESKTOP_DOWNLOADS.length > 0 ? '/downloads' : DOWNLOAD_URL.default}
+                        >
                           <Button
                             icon={<Icon icon={Download} size={14} />}
                             style={{ width: '100%' }}
