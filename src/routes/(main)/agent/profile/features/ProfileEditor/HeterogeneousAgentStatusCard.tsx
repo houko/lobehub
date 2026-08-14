@@ -1,7 +1,11 @@
 'use client';
 
 import { isDesktop } from '@lobechat/const';
-import { type BinaryStatus, type ClaudeAuthStatus } from '@lobechat/electron-client-ipc';
+import {
+  type BinaryStatus,
+  type BinaryUpdateInfo,
+  type ClaudeAuthStatus,
+} from '@lobechat/electron-client-ipc';
 import {
   getHeterogeneousAgentClientConfig,
   isRemoteHeterogeneousType,
@@ -224,6 +228,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
     const isUsingCustomCommand = resolvedCommand !== defaultCommand;
     const [status, setStatus] = useState<BinaryStatus | undefined>();
     const [auth, setAuth] = useState<ClaudeAuthStatus | null>(null);
+    const [updateInfo, setUpdateInfo] = useState<BinaryUpdateInfo | null>(null);
     const [commandInput, setCommandInput] = useState(resolvedCommand);
     const [detecting, setDetecting] = useState(true);
     const [isEditingCommand, setIsEditingCommand] = useState(false);
@@ -270,6 +275,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       }
 
       setDetecting(true);
+      setUpdateInfo(null);
       try {
         const result = await binaryService.detectHeterogeneousAgentCommand({
           agentType: provider.type,
@@ -278,6 +284,20 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
         setStatus(result);
         if (result.available) {
           void fetchAuth();
+          // Check for updates only when using the default command — a custom
+          // command may point to a fork or different distribution channel where
+          // npm "latest" is not the truth.
+          if (result.version && !isUsingCustomCommand) {
+            try {
+              const update = await binaryService.checkUpdate({
+                currentVersion: result.version,
+                name: resolvedCommand,
+              });
+              setUpdateInfo(update);
+            } catch {
+              setUpdateInfo(null);
+            }
+          }
         } else {
           setAuth(null);
         }
@@ -288,7 +308,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       } finally {
         setDetecting(false);
       }
-    }, [fetchAuth, provider.type, resolvedCommand]);
+    }, [fetchAuth, isUsingCustomCommand, provider.type, resolvedCommand]);
 
     useEffect(() => {
       void detect();
@@ -399,6 +419,27 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
             <Tag color="processing" style={{ marginInlineEnd: 0 }}>
               {status.version}
             </Tag>
+          )}
+          {updateInfo?.updateAvailable && updateInfo.latestVersion && (
+            <Tooltip
+              title={
+                <Flexbox horizontal align="center" gap={8}>
+                  <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                    {updateInfo.upgradeCommand}
+                  </Text>
+                  {updateInfo.upgradeCommand && (
+                    <CopyButton content={updateInfo.upgradeCommand} size="small" />
+                  )}
+                </Flexbox>
+              }
+            >
+              <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+                {t('settingSystemTools.update.versionFormat', {
+                  current: status.version,
+                  latest: updateInfo.latestVersion,
+                })}
+              </Tag>
+            </Tooltip>
           )}
           {status.path && (
             <Tooltip title={status.path}>
