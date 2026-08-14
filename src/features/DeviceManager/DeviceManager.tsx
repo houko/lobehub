@@ -1,5 +1,6 @@
 'use client';
 
+import { CLI_CONNECT_ENABLED, DESKTOP_APP_ENABLED } from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import type { DeviceScope, DeviceVisibility } from '@lobechat/types';
 import { ActionIcon, Flexbox, Icon, Skeleton, Text } from '@lobehub/ui';
@@ -326,7 +327,7 @@ const DeviceManager = memo<DeviceManagerProps>(({ onConnect, scope, visibility }
           <Text style={{ maxWidth: 440 }} type={'secondary'}>
             {t(isWorkspace ? 'workspaceSetting.devices.heroDesc' : 'devices.empty.desc')}
           </Text>
-          {isWorkspace && (
+          {isWorkspace && CLI_CONNECT_ENABLED && (
             <Button
               icon={<Icon icon={TerminalIcon} />}
               style={{ marginBlockStart: 8 }}
@@ -338,21 +339,31 @@ const DeviceManager = memo<DeviceManagerProps>(({ onConnect, scope, visibility }
           )}
         </Flexbox>
 
-        {!isWorkspace && (
+        {/*
+          A distribution may publish neither the desktop build nor the CLI, and
+          then there is no way to enrol a device at all. Offering the methods
+          anyway leads to a wizard whose own step is gated off, so the grid goes
+          rather than becoming an empty frame under the hero.
+        */}
+        {!isWorkspace && (DESKTOP_APP_ENABLED || CLI_CONNECT_ENABLED) && (
           <div className={styles.optionGrid}>
-            <ConnectOption
-              badge={t('devices.empty.methodDesktop.badge')}
-              desc={t('devices.empty.methodDesktop.desc')}
-              icon={MonitorDownIcon}
-              title={t('devices.empty.methodDesktop.title')}
-              onClick={() => onConnect('desktop')}
-            />
-            <ConnectOption
-              desc={t('devices.empty.methodCli.desc')}
-              icon={TerminalIcon}
-              title={t('devices.empty.methodCli.title')}
-              onClick={() => onConnect('cli')}
-            />
+            {DESKTOP_APP_ENABLED && (
+              <ConnectOption
+                badge={t('devices.empty.methodDesktop.badge')}
+                desc={t('devices.empty.methodDesktop.desc')}
+                icon={MonitorDownIcon}
+                title={t('devices.empty.methodDesktop.title')}
+                onClick={() => onConnect('desktop')}
+              />
+            )}
+            {CLI_CONNECT_ENABLED && (
+              <ConnectOption
+                desc={t('devices.empty.methodCli.desc')}
+                icon={TerminalIcon}
+                title={t('devices.empty.methodCli.title')}
+                onClick={() => onConnect('cli')}
+              />
+            )}
           </div>
         )}
       </Flexbox>
@@ -390,13 +401,18 @@ const DeviceManager = memo<DeviceManagerProps>(({ onConnect, scope, visibility }
                 {t('devices.selection.total', { count: devices.length })}
               </Text>
               <Flexbox horizontal align={'center'} gap={8}>
-                <Button
-                  icon={<Icon icon={MonitorUpIcon} />}
-                  size={'small'}
-                  onClick={() => onConnect()}
-                >
-                  {t('devices.connectWizard.button')}
-                </Button>
+                {/* Same reasoning as the empty state's method cards: with no
+                    enrolment route published, the wizard this opens has no
+                    completable step. */}
+                {(DESKTOP_APP_ENABLED || CLI_CONNECT_ENABLED) && (
+                  <Button
+                    icon={<Icon icon={MonitorUpIcon} />}
+                    size={'small'}
+                    onClick={() => onConnect()}
+                  >
+                    {t('devices.connectWizard.button')}
+                  </Button>
+                )}
                 <ActionIcon
                   icon={RefreshCwIcon}
                   loading={isValidating}

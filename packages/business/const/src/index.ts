@@ -56,6 +56,17 @@ export const EXTERNAL_INTEGRATIONS_ENABLED = true;
 export const DESKTOP_APP_ENABLED = true;
 
 /**
+ * Whether this distribution offers the CLI as a way to enrol a device.
+ *
+ * The `lh connect` flow installs the first-party CLI from the public npm
+ * registry, so a distribution that does not publish its own is offering a
+ * command that either fails or reaches somebody else's package. Separate from
+ * DESKTOP_APP_ENABLED because the two dead-end independently: shipping a
+ * desktop build does not make the CLI installable, and vice versa.
+ */
+export const CLI_CONNECT_ENABLED = true;
+
+/**
  * Whether this distribution has a changelog to point users at.
  *
  * `CHANGELOG_URL` is the hosted site's, so a rebranded or self-hosted build

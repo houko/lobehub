@@ -1,5 +1,6 @@
 'use client';
 
+import { CLI_CONNECT_ENABLED, DESKTOP_APP_ENABLED } from '@lobechat/business-const';
 import { isDesktop } from '@lobechat/const';
 import type {
   HeterogeneousAgentScanStatus,
@@ -632,47 +633,63 @@ const ConnectAgentContent = memo<ConnectAgentContentProps>(
                   {t('connectAgent.create.noDevicesDesc')}
                 </Text>
               </Flexbox>
-              <div className={styles.emptyOptions}>
-                <div className={styles.emptyOption}>
-                  <span className={styles.emptyOptionIcon}>
-                    <Icon icon={Download} size={20} />
-                  </span>
-                  <Flexbox gap={3}>
-                    <Text weight={500}>{t('connectAgent.create.downloadDesktop')}</Text>
-                    <Text fontSize={12} type={'secondary'}>
-                      {t('connectAgent.create.noDevicesDesktopHint')}
-                    </Text>
-                  </Flexbox>
-                  <div className={styles.emptyOptionAction}>
-                    <a href={DOWNLOAD_URL.default} rel={'noreferrer'} target={'_blank'}>
-                      <Button
-                        icon={<Icon icon={Download} size={14} />}
-                        style={{ width: '100%' }}
-                        type={'primary'}
-                      >
-                        {t('connectAgent.create.download')}
-                      </Button>
-                    </a>
-                  </div>
-                </div>
-                <div className={styles.emptyOption}>
-                  <span className={styles.emptyOptionIcon}>
-                    <Icon icon={TerminalIcon} size={20} />
-                  </span>
-                  <Flexbox gap={3}>
-                    <Text weight={500}>{t('connectAgent.create.connectCli')}</Text>
-                    <Text fontSize={12} type={'secondary'}>
-                      {t('connectAgent.create.noDevicesCliHint')}
-                    </Text>
-                  </Flexbox>
-                  <div className={styles.emptyOptionAction}>
-                    <div className={styles.emptyOptionCode}>
-                      <code>{t('connectAgent.create.noDevicesCmd')}</code>
-                      <CopyButton content={t('connectAgent.create.noDevicesCmd')} size={'small'} />
+              {/*
+                Both routes onto a device can be absent: the download points at
+                a build this distribution may not publish, and `lh connect`
+                installs a CLI it may not publish either. With neither, the grid
+                is dropped whole rather than left as an empty frame under the
+                hero.
+              */}
+              {(DESKTOP_APP_ENABLED || CLI_CONNECT_ENABLED) && (
+                <div className={styles.emptyOptions}>
+                  {DESKTOP_APP_ENABLED && (
+                    <div className={styles.emptyOption}>
+                      <span className={styles.emptyOptionIcon}>
+                        <Icon icon={Download} size={20} />
+                      </span>
+                      <Flexbox gap={3}>
+                        <Text weight={500}>{t('connectAgent.create.downloadDesktop')}</Text>
+                        <Text fontSize={12} type={'secondary'}>
+                          {t('connectAgent.create.noDevicesDesktopHint')}
+                        </Text>
+                      </Flexbox>
+                      <div className={styles.emptyOptionAction}>
+                        <a href={DOWNLOAD_URL.default} rel={'noreferrer'} target={'_blank'}>
+                          <Button
+                            icon={<Icon icon={Download} size={14} />}
+                            style={{ width: '100%' }}
+                            type={'primary'}
+                          >
+                            {t('connectAgent.create.download')}
+                          </Button>
+                        </a>
+                      </div>
                     </div>
-                  </div>
+                  )}
+                  {CLI_CONNECT_ENABLED && (
+                    <div className={styles.emptyOption}>
+                      <span className={styles.emptyOptionIcon}>
+                        <Icon icon={TerminalIcon} size={20} />
+                      </span>
+                      <Flexbox gap={3}>
+                        <Text weight={500}>{t('connectAgent.create.connectCli')}</Text>
+                        <Text fontSize={12} type={'secondary'}>
+                          {t('connectAgent.create.noDevicesCliHint')}
+                        </Text>
+                      </Flexbox>
+                      <div className={styles.emptyOptionAction}>
+                        <div className={styles.emptyOptionCode}>
+                          <code>{t('connectAgent.create.noDevicesCmd')}</code>
+                          <CopyButton
+                            content={t('connectAgent.create.noDevicesCmd')}
+                            size={'small'}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
               <Flexbox horizontal justify={'flex-end'} padding={8}>
                 <Button
                   icon={<Icon icon={RefreshCw} size={13} />}
