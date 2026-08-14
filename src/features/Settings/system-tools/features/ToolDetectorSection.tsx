@@ -161,26 +161,6 @@ const ToolDetectorSection = memo(() => {
       const statuses = await binaryService.detectAll(force);
       setToolStatuses(statuses);
       setDetectError(undefined);
-
-      // Batch-check updates for all available tools that have a version.
-      const checkParams = Object.entries(statuses)
-        .filter(([, s]) => s.available && s.version)
-        .map(([name, s]) => ({ currentVersion: s.version!, name }));
-
-      if (checkParams.length > 0) {
-        try {
-          const updates = await binaryService.checkUpdates(checkParams);
-          const updateMap: Record<string, BinaryUpdateInfo> = {};
-          checkParams.forEach((param, index) => {
-            if (updates[index]?.updateAvailable) {
-              updateMap[param.name] = updates[index];
-            }
-          });
-          setUpdateInfos(updateMap);
-        } catch {
-          // Update check failure is non-critical — silently skip.
-        }
-      }
     } catch (error) {
       setDetectError(error);
     } finally {
@@ -192,6 +172,42 @@ const ToolDetectorSection = memo(() => {
   useEffect(() => {
     void detectTools(true);
   }, [detectTools]);
+
+  // Background update check — runs after detection completes, does not
+  // delay the detecting spinner. Uses a cancellation token so a stale
+  // request (e.g. after re-detect) doesn't overwrite newer state.
+  useEffect(() => {
+    if (detecting) return;
+    if (Object.keys(toolStatuses).length === 0) return;
+
+    const checkParams = Object.entries(toolStatuses)
+      .filter(([, s]) => s.available && s.version)
+      .map(([name, s]) => ({ currentVersion: s.version!, name }));
+
+    if (checkParams.length === 0) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const updates = await binaryService.checkUpdates(checkParams);
+        if (cancelled) return;
+        const updateMap: Record<string, BinaryUpdateInfo> = {};
+        checkParams.forEach((param, index) => {
+          if (updates[index]?.updateAvailable) {
+            updateMap[param.name] = updates[index];
+          }
+        });
+        setUpdateInfos(updateMap);
+      } catch {
+        // Update check failure is non-critical — silently skip.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detecting, toolStatuses]);
 
   const handleRedetect = useCallback(() => {
     detectTools(true);

@@ -150,6 +150,42 @@ describe('checkBinaryUpdate', () => {
     expect(second.updateAvailable).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('recomputes updateAvailable from cached latestVersion when currentVersion changes', async () => {
+    // Simulate: user has v1.0.0, latest is v2.0.0 → update available.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ version: '2.0.0' }),
+    });
+
+    const first = await checkBinaryUpdate({ currentVersion: '1.0.0', name: 'claude' });
+    expect(first.updateAvailable).toBe(true);
+    expect(first.latestVersion).toBe('2.0.0');
+
+    // User upgrades to v2.0.0 and re-detects within TTL.
+    // Cache should be hit (no new fetch), but result should reflect
+    // the new currentVersion — no update available.
+    const second = await checkBinaryUpdate({ currentVersion: '2.0.0', name: 'claude' });
+    expect(second.updateAvailable).toBe(false);
+    expect(second.latestVersion).toBe('2.0.0');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not give success TTL to an invalid fetched version', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ version: 'not-valid-semver' }),
+    });
+
+    const first = await checkBinaryUpdate({ currentVersion: '1.0.0', name: 'codebuddy' });
+    expect(first.updateAvailable).toBe(false);
+
+    // Since the fetched version was invalid, it was cached as a failure.
+    // A second call within the failure TTL should NOT trigger a new fetch.
+    const second = await checkBinaryUpdate({ currentVersion: '1.0.0', name: 'codebuddy' });
+    expect(second.updateAvailable).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('checkBinaryUpdates (batch)', () => {

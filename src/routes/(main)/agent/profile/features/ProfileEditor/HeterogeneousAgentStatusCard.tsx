@@ -284,20 +284,6 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
         setStatus(result);
         if (result.available) {
           void fetchAuth();
-          // Check for updates only when using the default command — a custom
-          // command may point to a fork or different distribution channel where
-          // npm "latest" is not the truth.
-          if (result.version && !isUsingCustomCommand) {
-            try {
-              const update = await binaryService.checkUpdate({
-                currentVersion: result.version,
-                name: resolvedCommand,
-              });
-              setUpdateInfo(update);
-            } catch {
-              setUpdateInfo(null);
-            }
-          }
         } else {
           setAuth(null);
         }
@@ -308,11 +294,42 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       } finally {
         setDetecting(false);
       }
-    }, [fetchAuth, isUsingCustomCommand, provider.type, resolvedCommand]);
+    }, [fetchAuth, provider.type, resolvedCommand]);
 
     useEffect(() => {
       void detect();
     }, [detect]);
+
+    // Background update check — runs after detection completes, does not
+    // delay the detecting spinner. Skipped for custom commands (may point to
+    // a fork or non-npm distribution channel). Uses a cancellation token so
+    // a stale request (e.g. after re-detect) doesn't overwrite newer state.
+    useEffect(() => {
+      const version = status?.version;
+      if (detecting || !status?.available || !version || isUsingCustomCommand) {
+        setUpdateInfo(null);
+        return;
+      }
+
+      let cancelled = false;
+      setUpdateInfo(null);
+
+      void (async () => {
+        try {
+          const update = await binaryService.checkUpdate({
+            currentVersion: version,
+            name: resolvedCommand,
+          });
+          if (!cancelled) setUpdateInfo(update);
+        } catch {
+          // Silently skip — update badge is non-critical.
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [detecting, isUsingCustomCommand, resolvedCommand, status?.available, status?.version]);
 
     useEffect(() => {
       setCommandInput(resolvedCommand);
