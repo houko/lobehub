@@ -30,6 +30,13 @@ export const config = {
     '/settings(.*)',
     '/image',
     '/video',
+    // Registered in the SPA router but missing here, so it 404'd: a path absent
+    // from this list never reaches the middleware, is never rewritten to
+    // `/spa/<variant>/…`, and App Router has no page of that name to fall back
+    // on. The list has to be a literal (Next requirement, see above), so it
+    // cannot be derived from the router — adding a top-level route means adding
+    // it in both places.
+    '/downloads',
     '/resource',
     '/resource(.*)',
     '/profile(.*)',
