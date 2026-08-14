@@ -6,32 +6,26 @@ import { createLogger } from '@/utils/logger';
 const logger = createLogger('modules:binaries:updateCheck');
 
 /**
- * npm registry sources and upgrade commands for CLI binaries.
+ * npm registry sources for CLI binaries.
  *
  * Keyed by the binary *name* (the command users type), not the agent type.
  * Only CLIs with a trustworthy npm distribution are listed; CLIs installed via
  * native installers or PyPI are excluded.
+ *
+ * Note: upgrade commands are intentionally omitted from Layer 1. The detected
+ * CLI may have been installed via Homebrew, a native installer, or other
+ * channels where an npm command would create a conflicting installation.
+ * Installation-source detection and one-click upgrade guidance are deferred
+ * to Layer 3.
  */
-export const CLI_UPDATE_SOURCES: Record<string, { npmPackage: string; upgradeCommand: string }> = {
-  amp: { npmPackage: '@sourcegraph/amp', upgradeCommand: 'npm i -g @sourcegraph/amp@latest' },
-  claude: {
-    npmPackage: '@anthropic-ai/claude-code',
-    upgradeCommand: 'claude update',
-  },
-  codebuddy: {
-    npmPackage: '@tencent-ai/codebuddy-code',
-    upgradeCommand: 'npm i -g @tencent-ai/codebuddy-code@latest',
-  },
-  codex: { npmPackage: '@openai/codex', upgradeCommand: 'npm i -g @openai/codex@latest' },
-  gemini: {
-    npmPackage: '@google/gemini-cli',
-    upgradeCommand: 'npm i -g @google/gemini-cli@latest',
-  },
-  opencode: { npmPackage: 'opencode-ai', upgradeCommand: 'opencode upgrade' },
-  qwen: {
-    npmPackage: '@qwen-code/qwen-code',
-    upgradeCommand: 'npm i -g @qwen-code/qwen-code@latest',
-  },
+export const CLI_UPDATE_SOURCES: Record<string, { npmPackage: string }> = {
+  amp: { npmPackage: '@sourcegraph/amp' },
+  claude: { npmPackage: '@anthropic-ai/claude-code' },
+  codebuddy: { npmPackage: '@tencent-ai/codebuddy-code' },
+  codex: { npmPackage: '@openai/codex' },
+  gemini: { npmPackage: '@google/gemini-cli' },
+  opencode: { npmPackage: 'opencode-ai' },
+  qwen: { npmPackage: '@qwen-code/qwen-code' },
 };
 
 const NPM_REGISTRY = 'https://registry.npmjs.org';
@@ -76,13 +70,13 @@ async function fetchLatestVersion(npmPackage: string): Promise<string | undefine
 }
 
 /**
- * Build a `BinaryUpdateInfo` from the latest version, the user's current
- * version, and the CLI's upgrade command.
+ * Build a `BinaryUpdateInfo` from the latest version and the user's current
+ * version. Upgrade commands are intentionally omitted in Layer 1 — see
+ * `CLI_UPDATE_SOURCES` comment above.
  */
 function buildUpdateInfo(
   latestVersion: string | undefined,
   currentVersion: string,
-  upgradeCommand: string,
 ): BinaryUpdateInfo {
   if (!latestVersion || !semver.valid(latestVersion)) {
     return { updateAvailable: false };
@@ -90,7 +84,7 @@ function buildUpdateInfo(
 
   const updateAvailable = semver.gt(latestVersion, currentVersion);
   return updateAvailable
-    ? { latestVersion, updateAvailable: true, upgradeCommand }
+    ? { latestVersion, updateAvailable: true }
     : { latestVersion, updateAvailable: false };
 }
 
@@ -121,7 +115,7 @@ export async function checkBinaryUpdate(
   if (cached) {
     const ttl = cached.latestVersion ? SUCCESS_CACHE_TTL_MS : FAILURE_CACHE_TTL_MS;
     if (Date.now() - cached.checkedAt < ttl) {
-      return buildUpdateInfo(cached.latestVersion, currentVersion, source.upgradeCommand);
+      return buildUpdateInfo(cached.latestVersion, currentVersion);
     }
   }
 
@@ -133,7 +127,7 @@ export async function checkBinaryUpdate(
 
   cache.set(source.npmPackage, { checkedAt: Date.now(), latestVersion: validated });
 
-  return buildUpdateInfo(validated, currentVersion, source.upgradeCommand);
+  return buildUpdateInfo(validated, currentVersion);
 }
 
 /**

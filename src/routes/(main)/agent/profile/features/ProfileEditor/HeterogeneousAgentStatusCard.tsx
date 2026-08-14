@@ -438,25 +438,12 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
             </Tag>
           )}
           {updateInfo?.updateAvailable && updateInfo.latestVersion && (
-            <Tooltip
-              title={
-                <Flexbox horizontal align="center" gap={8}>
-                  <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                    {updateInfo.upgradeCommand}
-                  </Text>
-                  {updateInfo.upgradeCommand && (
-                    <CopyButton content={updateInfo.upgradeCommand} size="small" />
-                  )}
-                </Flexbox>
-              }
-            >
-              <Tag color="warning" style={{ marginInlineEnd: 0 }}>
-                {t('settingSystemTools.update.versionFormat', {
-                  current: status.version,
-                  latest: updateInfo.latestVersion,
-                })}
-              </Tag>
-            </Tooltip>
+            <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+              {t('settingSystemTools.update.versionFormat', {
+                current: status.version,
+                latest: updateInfo.latestVersion,
+              })}
+            </Tag>
           )}
           {status.path && (
             <Tooltip title={status.path}>

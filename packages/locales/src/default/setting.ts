@@ -1250,7 +1250,6 @@ export default {
   'settingSystemTools.tools.rg.desc': 'ripgrep - extremely fast text search tool',
   'settingSystemTools.tools.uv.desc': 'uv - extremely fast Python package manager',
   'settingSystemTools.update.badge': 'Updatable',
-  'settingSystemTools.update.tooltipTitle': 'Upgrade command',
   'settingSystemTools.update.versionFormat': '{{current}} → {{latest}}',
   'settingTTS.openai.sttModel': 'OpenAI Speech-to-Text Model',
   'settingTTS.openai.title': 'OpenAI',

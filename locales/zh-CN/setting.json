@@ -1061,7 +1061,6 @@
   "settingSystemTools.tools.rg.desc": "ripgrep - 极快的文本搜索工具",
   "settingSystemTools.tools.uv.desc": "uv - 极快的 Python 包管理器",
   "settingSystemTools.update.badge": "可更新",
-  "settingSystemTools.update.tooltipTitle": "升级命令",
   "settingSystemTools.update.versionFormat": "{{current}} → {{latest}}",
   "settingTTS.openai.sttModel": "OpenAI 语音识别模型",
   "settingTTS.openai.title": "OpenAI",

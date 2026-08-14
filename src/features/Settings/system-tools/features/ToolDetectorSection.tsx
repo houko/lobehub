@@ -112,22 +112,9 @@ const ToolStatusDisplay = memo<ToolStatusDisplayProps>(({ status, isDetecting, u
         <Icon color="var(--ant-color-success)" icon={CheckCircle2} size={16} />
         <Text type="success">{t('settingSystemTools.status.available')}</Text>
         {updateInfo?.updateAvailable && updateInfo.latestVersion && (
-          <Tooltip
-            title={
-              <Flexbox horizontal align="center" gap={8}>
-                <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                  {updateInfo.upgradeCommand}
-                </Text>
-                {updateInfo.upgradeCommand && (
-                  <CopyButton content={updateInfo.upgradeCommand} size="small" />
-                )}
-              </Flexbox>
-            }
-          >
-            <Tag color="warning" style={{ marginInlineEnd: 0 }}>
-              {t('settingSystemTools.update.badge')}
-            </Tag>
-          </Tooltip>
+          <Tag color="warning" style={{ marginInlineEnd: 0 }}>
+            {t('settingSystemTools.update.badge')}
+          </Tag>
         )}
       </Flexbox>
       {status.path && (

@@ -45,7 +45,6 @@ describe('checkBinaryUpdate', () => {
     expect(result).toEqual({
       latestVersion: '1.18.18',
       updateAvailable: true,
-      upgradeCommand: 'claude update',
     });
   });
 
@@ -206,7 +205,6 @@ describe('checkBinaryUpdates (batch)', () => {
 
     expect(results).toHaveLength(2);
     expect(results[0].updateAvailable).toBe(true);
-    expect(results[0].upgradeCommand).toBe('claude update');
     expect(results[1].updateAvailable).toBe(false);
   });
 
