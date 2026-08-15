@@ -95,7 +95,8 @@ interface SubagentLink {
 }
 
 /**
- * Maps the DeepSeek Harness SDK runtime protocol (`@deepseek-ai/dsh-jsonrpc`)
+ * Maps the DeepSeek Harness SDK runtime protocol
+ * (`@deepseek-ai/dsh-sdk-jsonrpc-server`)
  * into shared stream events.
  *
  * Unlike the CLI adapters, the harness does not print a bespoke JSONL dialect:

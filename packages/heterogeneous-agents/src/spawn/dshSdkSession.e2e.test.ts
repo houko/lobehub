@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -11,10 +11,8 @@ import { spawnDshSdkSession } from './dshSdkSession';
  * End-to-end against a REAL DeepSeek Harness runtime — real model calls, real
  * tool execution, real subagent delegation.
  *
- * Self-skips unless both are present:
- * - `DEEPSEEK_API_KEY`
- * - `DSH_REPO` pointing at a `deepseek-harness` checkout with `node_modules`
- *   installed (the runtime is launched from source through tsx)
+ * Self-skips without `DEEPSEEK_API_KEY`. The runtime and its composition are
+ * owned by this package, so the suite needs no DeepSeek Harness checkout.
  *
  * These cases exist because the replay fixtures cannot cover them: the recorded
  * snapshots normalize every session id to one value, so parent/child routing is
@@ -22,24 +20,10 @@ import { spawnDshSdkSession } from './dshSdkSession';
  * against the actual filesystem.
  */
 
-const HARNESS =
-  process.env.DSH_REPO ?? path.join(process.env.HOME ?? '', 'CodeProjects/deepseek-harness');
-const CONFIG = path.join(HARNESS, 'examples/jsonrpc-agent/cordis.yml');
+const runnable = Boolean(process.env.DEEPSEEK_API_KEY);
 
-const runnable =
-  Boolean(process.env.DEEPSEEK_API_KEY) &&
-  existsSync(CONFIG) &&
-  existsSync(path.join(HARNESS, 'node_modules/.bin/tsx'));
-
-const start = async (workspace: string, config = CONFIG) =>
+const start = async (workspace: string) =>
   spawnDshSdkSession({
-    args: [
-      '--import',
-      'tsx',
-      path.join(HARNESS, 'packages/examples/jsonrpc-demo/src/bin.ts'),
-      config,
-    ],
-    command: process.execPath,
     cwd: workspace,
     env: {
       DSH_CWD: workspace,
@@ -50,12 +34,10 @@ const start = async (workspace: string, config = CONFIG) =>
     model: 'deepseek-chat',
     provider: 'deepseek-official',
     sessionId: 'lobehub-e2e',
-    // Node resolves `--import` loader specifiers against the process cwd, so a
-    // source launch runs from the harness checkout while the agent works in the
-    // temp workspace.
-    spawnCwd: HARNESS,
     timeoutMs: 240_000,
   });
+
+const createWorkspace = () => mkdtemp(path.join(tmpdir(), 'dsh-e2e-'));
 
 const collect = async (
   handle: Awaited<ReturnType<typeof start>>,
@@ -80,7 +62,7 @@ const textOf = (events: HeterogeneousAgentEvent[], subagent = false): string =>
 describe.runIf(runnable)('spawnDshSdkSession — live harness', () => {
   it('streams a text turn token by token with a usable route and usage', async () => {
     const events = await collect(
-      await start(mkdtempSync(path.join(tmpdir(), 'dsh-e2e-'))),
+      await start(await createWorkspace()),
       'Reply with exactly: LIVE OK',
     );
 
@@ -99,7 +81,7 @@ describe.runIf(runnable)('spawnDshSdkSession — live harness', () => {
   }, 240_000);
 
   it('pairs every tool call and writes into the workspace, not the launch directory', async () => {
-    const workspace = mkdtempSync(path.join(tmpdir(), 'dsh-e2e-'));
+    const workspace = await createWorkspace();
     const events = await collect(
       await start(workspace),
       'Use the bash tool to run: echo live-proof-4417 . Then write the file note.txt containing the word DONE. Then reply with the echo output.',
@@ -119,13 +101,12 @@ describe.runIf(runnable)('spawnDshSdkSession — live harness', () => {
 
     // `cwd` is the agent workspace: conflating it with the launch directory
     // wrote the agent's files into the harness checkout.
-    expect(readFileSync(path.join(workspace, 'note.txt'), 'utf8')).toContain('DONE');
-    expect(existsSync(path.join(HARNESS, 'note.txt'))).toBe(false);
+    expect(await readFile(path.join(workspace, 'note.txt'), 'utf8')).toContain('DONE');
   }, 240_000);
 
   it('stamps a delegated child session onto its spawning tool call', async () => {
     const events = await collect(
-      await start(mkdtempSync(path.join(tmpdir(), 'dsh-e2e-'))),
+      await start(await createWorkspace()),
       'Use the subagent tool exactly once, with description "echo probe" and a prompt asking it to reply with exactly: child answer 42. Then report what the subagent said.',
     );
 
@@ -150,50 +131,10 @@ describe.runIf(runnable)('spawnDshSdkSession — live harness', () => {
     expect(textOf(events, true)).toContain('child answer 42');
     expect(textOf(events, false)).not.toBe('');
   }, 240_000);
-
-  it('forwards a model-generated session title when a title provider is composed', async () => {
-    // The stock composition registers no title provider, so it can only produce
-    // the deterministic fallback, which the adapter suppresses on purpose.
-    const workspace = mkdtempSync(path.join(tmpdir(), 'dsh-e2e-'));
-    const config = path.join(workspace, 'title.cordis.yml');
-    writeFileSync(
-      config,
-      readFileSync(CONFIG, 'utf8').replace(
-        '- id: sessions',
-        [
-          '- id: session-title-provider',
-          "  name: '@deepseek-ai/dsh-session-title-first-message-llm'",
-          '  config:',
-          '    targetWords: 6',
-          '    targetCjkCharacters: 12',
-          '    maxInputBytes: 4096',
-          '    maxOutputTokens: 64',
-          '    timeoutMs: 30000',
-          '',
-          '- id: sessions',
-        ].join('\n'),
-      ),
-    );
-
-    const events = await collect(
-      await start(workspace, config),
-      'Explain in one sentence what a monorepo is.',
-    );
-
-    const title = events.find((e) => e.type === 'session_title');
-    expect(title?.data).toMatchObject({ origin: 'model' });
-    expect(String((title?.data as any).title).length).toBeGreaterThan(0);
-    // The harness titles mid-run, before the answer finishes.
-    expect(events.indexOf(title!)).toBeLessThan(events.length - 1);
-  }, 240_000);
 });
 
 describe.skipIf(runnable)('spawnDshSdkSession — live harness (not runnable here)', () => {
   it('names what the live suite needs, so a skip does not read as coverage', () => {
-    expect({
-      apiKey: Boolean(process.env.DEEPSEEK_API_KEY),
-      harnessConfig: existsSync(CONFIG),
-      harnessDeps: existsSync(path.join(HARNESS, 'node_modules/.bin/tsx')),
-    }).not.toEqual({ apiKey: true, harnessConfig: true, harnessDeps: true });
+    expect({ apiKey: Boolean(process.env.DEEPSEEK_API_KEY) }).not.toEqual({ apiKey: true });
   });
 });

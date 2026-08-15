@@ -1,6 +1,10 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-import { spawnDshSdkSession } from './dshSdkSession';
+import { resolveDshRuntimeLaunch, spawnDshSdkSession } from './dshSdkSession';
 
 /**
  * A stand-in harness runtime: answers the handshake and the prompt, then
@@ -60,6 +64,31 @@ const collect = async (handle: Awaited<ReturnType<typeof startFake>>, text: stri
 };
 
 describe('spawnDshSdkSession', () => {
+  it('resolves the LobeHub-owned runtime entry without a DSH checkout', () => {
+    const launch = resolveDshRuntimeLaunch();
+
+    expect(launch.command).toBe(process.execPath);
+    expect(launch.args.at(-1)).toMatch(/dshRuntimeEntry\.(?:js|ts)$/);
+    expect(launch.args.join(' ')).not.toContain('dsh-sdk-jsonrpc-demo');
+  });
+
+  it('boots the bundled composition and completes the JSON-RPC handshake', async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), 'lobehub-dsh-smoke-'));
+    const session = await spawnDshSdkSession({
+      cwd: workspace,
+      env: {
+        DSH_CWD: workspace,
+        DSH_SESSION_ROOT: path.join(workspace, '.sessions'),
+      },
+      model: 'deepseek-chat',
+      provider: 'deepseek-official',
+      sessionId: 'smoke',
+      timeoutMs: 20_000,
+    });
+
+    await session.dispose();
+  }, 20_000);
+
   it('completes the handshake and streams one turn to whole-agent idle', async () => {
     const session = await startFake();
     try {

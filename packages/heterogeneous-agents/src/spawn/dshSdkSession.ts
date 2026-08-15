@@ -1,10 +1,12 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 import { DshAdapter } from '../adapters/dsh';
 import type { HeterogeneousAgentEvent } from '../types';
 
 /**
- * Drives a DeepSeek Harness SDK runtime (`@deepseek-ai/dsh-jsonrpc`) over
+ * Drives a DeepSeek Harness SDK runtime (`@deepseek-ai/dsh-sdk-jsonrpc-server`) over
  * newline-delimited JSON-RPC on stdio.
  *
  * This is the bidirectional counterpart to `spawnAgent`: the harness is a
@@ -13,10 +15,10 @@ import type { HeterogeneousAgentEvent } from '../types';
  * fit. Its stdout carries protocol frames only.
  */
 export interface DshSdkSessionOptions {
-  /** Arguments for the runtime binary; the harness requires a `cordis.yml` path. */
-  args: string[];
-  /** Runtime binary — the bundled executable, or `node` when launching from source. */
-  command: string;
+  /** Arguments for a custom runtime binary. Omit with {@link command} to use LobeHub's runtime. */
+  args?: string[];
+  /** Custom runtime binary. Omit to launch LobeHub's bundled DSH composition. */
+  command?: string;
   /**
    * Agent workspace. Sent as the harness session `cwd`, which is what the
    * filesystem tools resolve relative paths against, and used as the child's
@@ -42,6 +44,31 @@ export interface DshSdkSessionOptions {
   /** Wall-clock ceiling for the whole run. */
   timeoutMs?: number;
 }
+
+export interface DshRuntimeLaunch {
+  args: string[];
+  command: string;
+  env?: Record<string, string>;
+}
+
+/** Resolve the source entry through tsx in development and compiled JS in production. */
+export const resolveDshRuntimeLaunch = (): DshRuntimeLaunch => {
+  const currentPath = fileURLToPath(import.meta.url);
+  const sourceMode = currentPath.endsWith('.ts');
+  const entryUrl = new URL(
+    sourceMode ? './dshRuntimeEntry.ts' : './dshRuntimeEntry.js',
+    import.meta.url,
+  );
+  const env = process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : undefined;
+
+  if (!sourceMode) return { args: [fileURLToPath(entryUrl)], command: process.execPath, env };
+
+  return {
+    args: ['--import', createRequire(import.meta.url).resolve('tsx'), fileURLToPath(entryUrl)],
+    command: process.execPath,
+    env,
+  };
+};
 
 export interface DshSdkSessionHandle {
   /** Terminate the runtime; safe to call more than once. */
@@ -122,9 +149,16 @@ class JsonRpcStdio {
 export const spawnDshSdkSession = async (
   options: DshSdkSessionOptions,
 ): Promise<DshSdkSessionHandle> => {
-  const child = spawn(options.command, options.args, {
+  if (options.command === undefined && options.args !== undefined) {
+    throw new TypeError('DSH runtime args require an explicit command');
+  }
+  const runtime: DshRuntimeLaunch =
+    options.command === undefined
+      ? resolveDshRuntimeLaunch()
+      : { args: options.args ?? [], command: options.command };
+  const child = spawn(runtime.command, runtime.args, {
     cwd: options.spawnCwd ?? options.cwd,
-    env: { ...process.env, ...options.env } as NodeJS.ProcessEnv,
+    env: { ...process.env, ...runtime.env, ...options.env } as NodeJS.ProcessEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
 
