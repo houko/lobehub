@@ -117,7 +117,7 @@ export class ExpertiseIngestionService {
     if (marker.kind === 'self-reflection' && marker.topicId) {
       return this.ingestCompletion({
         agentId,
-        operationId: `${input.operationId}:${marker.topicId}`,
+        operationId: input.operationId,
         topicId: marker.topicId,
       });
     }
@@ -139,7 +139,7 @@ export class ExpertiseIngestionService {
         .map((topic) =>
           this.ingestCompletion({
             agentId,
-            operationId: `${input.operationId}:${topic.topicId}`,
+            operationId: input.operationId,
             topicId: topic.topicId,
           }),
         ),

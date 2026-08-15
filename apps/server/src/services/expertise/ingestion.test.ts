@@ -35,7 +35,7 @@ describe('ExpertiseIngestionService.ingestSelfReview', () => {
 
     expect(ingestCompletion).toHaveBeenCalledWith({
       agentId: 'agent_1',
-      operationId: 'op_review_1:topic_1',
+      operationId: 'op_review_1',
       topicId: 'topic_1',
     });
   });
