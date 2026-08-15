@@ -85,12 +85,12 @@ const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvid
       ) : isOverwrite ? (
         <Alert
           showIcon
+          title={t('providerImport.overwriteTitle')}
+          type={'warning'}
           description={t('providerImport.overwriteDescription', {
             id: existingProvider.id,
             name: existingProvider.name,
           })}
-          title={t('providerImport.overwriteTitle')}
-          type={'warning'}
         />
       ) : (
         <Alert

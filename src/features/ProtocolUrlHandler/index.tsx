@@ -4,9 +4,10 @@ import type { ProviderImportPreview, ProviderImportRequest } from '@lobechat/ele
 import { useWatchBroadcast } from '@lobechat/electron-client-ipc';
 import { toast } from '@lobehub/ui/base-ui';
 import { t } from 'i18next';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { type McpInstallRequest } from '@/features/ProtocolUrlHandler/InstallPlugin/types';
+import { useSingleton } from '@/hooks/useSingleton';
 import { ensureElectronIpc } from '@/utils/electron/ipc';
 
 import PluginInstallConfirmModal from './InstallPlugin';
@@ -20,7 +21,7 @@ const providerImportErrorKeys = {
 
 const ProtocolUrlHandler = () => {
   const [installRequest, setInstallRequest] = useState<McpInstallRequest | null>(null);
-  const handledProviderImportIds = useRef(new Set<string>());
+  const handledProviderImportIds = useSingleton(() => new Set<string>());
 
   const handleMcpInstallRequest = useCallback(
     (data: { marketId?: string; pluginId: string; schema: any }) => {
@@ -34,16 +35,19 @@ const ProtocolUrlHandler = () => {
     setInstallRequest(null);
   }, []);
 
-  const showProviderImport = useCallback((preview: ProviderImportPreview) => {
-    if (handledProviderImportIds.current.has(preview.requestId)) return;
-    handledProviderImportIds.current.add(preview.requestId);
+  const showProviderImport = useCallback(
+    (preview: ProviderImportPreview) => {
+      if (handledProviderImportIds.has(preview.requestId)) return;
+      handledProviderImportIds.add(preview.requestId);
 
-    void createProviderImportModal(preview).catch((error) => {
-      console.error('Failed to prepare provider import', error);
-      void ensureElectronIpc().providerImport.cancel(preview.requestId);
-      toast.error(t('providerImport.error.apply', { ns: 'modelProvider' }));
-    });
-  }, []);
+      void createProviderImportModal(preview).catch((error) => {
+        console.error('Failed to prepare provider import', error);
+        void ensureElectronIpc().providerImport.cancel(preview.requestId);
+        toast.error(t('providerImport.error.apply', { ns: 'modelProvider' }));
+      });
+    },
+    [handledProviderImportIds],
+  );
 
   const handleProviderImportRequest = useCallback(
     (request: ProviderImportRequest) => {
