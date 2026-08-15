@@ -52,7 +52,7 @@ import { workspaces } from './workspace';
  *   insights   跨多次实践才看得出的元模式，由定时分析作业产出
  */
 
-export const EXPERTISE_DOMAIN_SOURCES = ['builtin', 'market', 'user'] as const;
+export const EXPERTISE_DOMAIN_SOURCES = ['market', 'user'] as const;
 export const EXPERTISE_LAYER_SOURCES = ['canonical', 'invented'] as const;
 export const EXPERTISE_SEED_STATES = ['seeding', 'seeded'] as const;
 export const EXPERTISE_CONTRIBUTION_MODES = ['read-only', 'contribute', 'derive'] as const;
@@ -102,8 +102,9 @@ export const expertiseDomains = pgTable(
     description: text('description'),
 
     // ---- 所有权（不是使用权）。对齐 projects / documents 的写法 ----
-    /** builtin 领域无 owner —— 定义活在代码里，DB 行只是 FK 目标。 */
-    userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
     workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
     visibility: text('visibility', { enum: ['private', 'public'] })
       .notNull()
@@ -192,10 +193,6 @@ export const expertiseDomains = pgTable(
     ...timestamps,
   },
   (t) => [
-    check(
-      'expertise_domains_builtin_has_no_owner',
-      sql`(${t.source} = 'builtin') = (${t.userId} IS NULL)`,
-    ),
     uniqueIndex('expertise_domains_slug_user_unique')
       .on(t.slug, t.userId)
       .where(isNull(t.workspaceId)),
