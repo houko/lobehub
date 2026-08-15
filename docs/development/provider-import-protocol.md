@@ -17,8 +17,9 @@ lobehub://provider/import?callback=http%3A%2F%2F127.0.0.1%3A49152%2Flobehub%2Fpr
 
 The callback must return HTTP 200 with `Content-Type: application/json` or
 `application/vnd.lobehub.provider-import+json`. LobeHub refuses redirects, applies a 10-second
-timeout, and reads at most 256 KiB. Close the callback after its first request or after a short
-expiry even if no request arrives.
+timeout, reads at most 256 KiB, and connects directly instead of using the configured application
+proxy. Close the callback after its first request or after a short expiry even if no request
+arrives.
 
 ## Payload version 1
 
