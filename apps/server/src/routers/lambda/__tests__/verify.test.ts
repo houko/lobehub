@@ -1,3 +1,4 @@
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { verifyRouter } from '@/server/routers/lambda/verify';
@@ -87,15 +88,21 @@ describe('verifyRouter', () => {
   });
 
   describe('generateCriteria', () => {
-    it('preserves InvalidProviderAPIKey as an actionable client error', async () => {
+    it('preserves InvalidProviderAPIKey without returning a session-expired HTTP status', async () => {
       modelMocks.generateCriteria.mockRejectedValueOnce({ errorType: 'InvalidProviderAPIKey' });
 
-      await expect(
-        createCaller().generateCriteria({
+      const error = await createCaller()
+        .generateCriteria({
           goal: 'Ship a responsive task board',
           modelConfig: { model: 'claude-sonnet-4-6', provider: 'anthropic' },
-        }),
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'InvalidProviderAPIKey' });
+        })
+        .catch((error) => error);
+
+      expect(error).toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: 'InvalidProviderAPIKey',
+      });
+      expect(getHTTPStatusCodeFromError(error)).toBe(412);
     });
 
     it('does not rewrite unrelated generation failures', async () => {

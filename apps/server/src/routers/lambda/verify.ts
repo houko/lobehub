@@ -498,7 +498,7 @@ export const verifyRouter = router({
         if (errorType === AgentRuntimeErrorType.InvalidProviderAPIKey) {
           throw new TRPCError({
             cause: error,
-            code: 'UNAUTHORIZED',
+            code: 'PRECONDITION_FAILED',
             message: AgentRuntimeErrorType.InvalidProviderAPIKey,
           });
         }
