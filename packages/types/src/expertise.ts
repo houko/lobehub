@@ -1,19 +1,19 @@
 /**
- * Expertise —— SCLPT 自进化体系的共享类型。
+ * Shared types for the SCLPT expertise system.
  *
- * 这些形状同时被 DB schema、reflection 工具和前端消费，所以放在 types 里而不是
- * 就地内联：一处改动三处必须同步。
+ * The database schema, reflection tools, and frontend all consume these shapes, so their
+ * contracts live here instead of being duplicated by each consumer.
  */
 
 /**
- * 分层模型的一层。归属于专长而不是全局枚举 —— Cooper 三模型、
- * 正确性/可维护性/安全性、L1/L2/L3 各不相同。
+ * One layer in an expertise-specific model. Layers are not a global taxonomy: different
+ * expertises may use Cooper's three models, correctness/maintainability/security, or L1/L2/L3.
  */
 export interface ExpertiseLayerDefinition {
-  /** 这一层抄的哪本经典。缺失意味着这层是自己发明的。 */
+  /** Canonical source for this layer. Omission means the layer was invented locally. */
   canonRef?: string;
   description?: string;
-  /** 稳定 key，被 lessons.layer 和 snapshots.layerCounts 引用。 */
+  /** Stable key referenced by lessons.layer and snapshots.layerCounts. */
   key: string;
   title: string;
 }
@@ -21,59 +21,64 @@ export interface ExpertiseLayerDefinition {
 export type ExpertiseEvidenceKind = 'image' | 'text' | 'diff' | 'json' | 'metric';
 
 /**
- * 一次实践必须留下的一项证据。挂了 layer 的条目只在跑那一层时要求 ——
- * 例如 screenshot 挂在 L2 且 required，没截图就不允许下 L2 的结论。
+ * Evidence expected from one practice run. A layer-scoped item is required only when that layer
+ * runs. For example, a required L2 screenshot must exist before the run can make an L2 conclusion.
  */
 export interface ExpertiseEvidenceSpecItem {
   key: string;
   kind: ExpertiseEvidenceKind;
   label: string;
-  /** 只在跑这一层时要求；不填表示每次都要求。 */
+  /** Require this item only for the specified layer; omit the layer to require it for every run. */
   layer?: string;
   required: boolean;
 }
 
-/** 三种极性各自的四段 key。对话改写按 key 定位，只改其中一段。 */
+/**
+ * Allowed section keys for each lesson polarity. Sections are optional and polarity-specific;
+ * conversational revisions use the key to update one section without rewriting the others.
+ */
 export const EXPERTISE_SECTION_KEYS = {
-  /** 这样是对的 / 为什么管用 / 别退化成什么 */
+  /** What is good / why it works / what not to regress into. */
   good: ['good', 'works', 'dont'],
-  /** 判据是什么 / 为什么 / 怎么用 / 什么时候不适用 */
+  /** The criterion / why it matters / how to apply it / when it does not apply. */
   rule: ['rule', 'why', 'how', 'limits'],
-  /** 错的做法 / 为什么错 / 会坏什么 / 对的做法 */
+  /** The wrong approach / why it is wrong / what it breaks / the correct approach. */
   bad: ['wrong', 'why', 'breaks', 'correct'],
 } as const;
 
 export type ExpertiseLessonPolarity = keyof typeof EXPERTISE_SECTION_KEYS;
+export type ExpertiseLessonSectionKey =
+  (typeof EXPERTISE_SECTION_KEYS)[ExpertiseLessonPolarity][number];
 
 export interface ExpertiseLessonSection {
   body: string;
-  /** 取自 EXPERTISE_SECTION_KEYS[polarity]。 */
-  key: string;
+  /** One of the section keys allowed by the lesson's polarity. */
+  key: ExpertiseLessonSectionKey;
 }
 
 /**
- * Canon 的一个条目。条目化是必需的 —— 早期把 canon 存成一句话时，
- * lesson 的 canonAnchor 100% 是 null：锚点不可引用就锚不上。
+ * One referenceable entry in an expertise canon. Canon entries must be addressable: when the canon
+ * was stored as one prose string, lessons could not reliably populate canonAnchor.
  *
- * 与 layers 同构，所以同样存 jsonb 而不抽表：每个领域 7-8 条且固定，
- * 读取永远是全量（喂 prompt / 算覆盖率），9 个真实领域间零复用。
+ * Entries stay in JSONB, like layers, because each expertise owns a small fixed set that is always
+ * read together for prompt injection and coverage calculation, with no cross-expertise reuse.
  */
 export interface ExpertiseCanonEntry {
-  /** 稳定标识，被 lessons.canonAnchor 引用。 */
+  /** Stable identifier referenced by lessons.canonAnchor. */
   key: string;
-  /** 哪本书 / 哪套方法。 */
+  /** Book, framework, or methodology that defines this entry. */
   source: string;
-  /** 这条理论说什么 —— 为什么这类失败会在任何同类工作里发生。 */
+  /** The general principle explaining why this failure recurs across similar work. */
   statement: string;
   title: string;
 }
 
 /**
- * 锚定阶段给出的一个候选领域。
+ * One candidate expertise proposed during anchoring.
  *
- * 领域是**选择**不是发现：同一个 agent 锚两次可能得到「技术情报分析」和
- * 「论文解读」两个都成立的身份，各自带不同的 canon 与分层。所以候选全集要留着，
- * 由人来选，且没选的那条路也保留 —— 后面才能回答「当时选另一个会怎样」。
+ * An expertise is selected rather than discovered: the same agent may plausibly anchor as either a
+ * technical-intelligence analyst or a paper reviewer, each with a different canon and layer model.
+ * Preserve all candidates so a person can choose and revisit the alternatives later.
  */
 export interface ExpertiseAnchorCandidate {
   canonEntries: ExpertiseCanonEntry[];
@@ -85,7 +90,7 @@ export interface ExpertiseAnchorCandidate {
   layers: ExpertiseLayerDefinition[];
   layerSource: 'canonical' | 'invented';
   outOfScope?: string;
-  /** 这个候选是怎么从语料里读出来的 —— 供人判断该选哪个。 */
+  /** Why this candidate was inferred from the source material, for the person choosing an anchor. */
   rationale?: string;
   title: string;
 }
