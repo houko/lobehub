@@ -9,6 +9,7 @@ import {
   expertiseInsights,
   expertiseLessons,
   expertiseRuns,
+  topics,
 } from '../schemas';
 import type { LobeChatDatabase } from '../type';
 import { idGenerator } from '../utils/idGenerator';
@@ -282,7 +283,7 @@ export class ExpertiseModel {
         note: expertiseHits.note,
         outcome: expertiseHits.outcome,
         runIndex: expertiseRuns.runIndex,
-        runTitle: expertiseRuns.subjectId,
+        runTitle: sql<string>`coalesce(${topics.title}, ${expertiseRuns.subjectId})`,
         severity: expertiseHits.severity,
         subjectId: expertiseRuns.subjectId,
         subjectType: expertiseRuns.subjectType,
@@ -290,6 +291,10 @@ export class ExpertiseModel {
       })
       .from(expertiseHits)
       .innerJoin(expertiseRuns, eq(expertiseRuns.id, expertiseHits.runId))
+      .leftJoin(
+        topics,
+        and(eq(expertiseRuns.subjectType, 'topic'), eq(topics.id, expertiseRuns.subjectId)),
+      )
       .where(eq(expertiseHits.lessonId, lessonId))
       .orderBy(desc(expertiseHits.createdAt))
       .limit(limit);
