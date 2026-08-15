@@ -14,6 +14,7 @@ export * from './mcpInstall';
 export * from './notification';
 export * from './proxy';
 export * from './proxyTRPCRequest';
+export * from './providerImport';
 export * from './route';
 export * from './screenCapture';
 export * from './shortcut';

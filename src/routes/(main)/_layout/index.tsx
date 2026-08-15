@@ -26,6 +26,7 @@ import TabCacheBridges from '@/features/Electron/titlebar/TabBar/TabCacheBridges
 import TitleBar from '@/features/Electron/titlebar/TitleBar';
 import HotkeyHelperPanel from '@/features/HotkeyHelperPanel';
 import NavPanelShell from '@/features/NavPanel/Shell';
+import ProtocolUrlHandler from '@/features/ProtocolUrlHandler';
 import { DndContextWrapper } from '@/features/ResourceManager/DndContextWrapper';
 import { RouteMetaBridge } from '@/features/RouteMeta';
 import { usePlatform } from '@/hooks/usePlatform';
@@ -63,6 +64,7 @@ const Layout: FC = () => {
         </Suspense>
         {isDesktop && <AuthRequiredModal />}
         {isDesktop && <ZoomHUD />}
+        {isDesktop && <ProtocolUrlHandler />}
 
         <Suspense fallback={null}>{isDesktop && <TitleBar />}</Suspense>
         <DndContextWrapper>

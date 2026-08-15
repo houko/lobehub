@@ -1,4 +1,5 @@
 import type { McpInstallSchema } from '../types';
+import type { ProviderImportRequest } from '../types/providerImport';
 
 /**
  * Protocol installation related Broadcast events (main process -> renderer process)
@@ -16,4 +17,9 @@ export interface ProtocolBroadcastEvents {
     /** MCP Schema object */
     schema: McpInstallSchema;
   }) => void;
+  /**
+   * Provider import request event.
+   * The main process only emits ready payloads after a bounded loopback callback succeeds.
+   */
+  providerImportRequest: (data: ProviderImportRequest) => void;
 }
