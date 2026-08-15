@@ -11,6 +11,7 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -18,6 +19,7 @@ import {
   pgTable,
   real,
   text,
+  unique,
   uniqueIndex,
   uuid,
   varchar,
@@ -362,6 +364,7 @@ export const expertiseLessons = pgTable(
   },
   (t) => [
     uniqueIndex('expertise_lessons_domain_code_unique').on(t.domainId, t.code),
+    unique('expertise_lessons_id_domain_unique').on(t.id, t.domainId),
     index('expertise_lessons_domain_status_hits_idx').on(t.domainId, t.status, t.hitCount),
     index('expertise_lessons_domain_layer_idx').on(t.domainId, t.layer),
     index('expertise_lessons_compiled_criterion_idx').on(t.compiledCriterionId),
@@ -477,6 +480,7 @@ export const expertiseRuns = pgTable(
   },
   (t) => [
     uniqueIndex('expertise_runs_domain_run_index_unique').on(t.domainId, t.runIndex),
+    unique('expertise_runs_id_domain_unique').on(t.id, t.domainId),
     uniqueIndex('expertise_runs_domain_reflection_key_unique')
       .on(t.domainId, t.reflectionKey)
       .where(isNotNull(t.reflectionKey)),
@@ -507,12 +511,8 @@ export const expertiseHits = pgTable(
   'expertise_hits',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    runId: uuid('run_id')
-      .notNull()
-      .references(() => expertiseRuns.id, { onDelete: 'cascade' }),
-    lessonId: uuid('lesson_id')
-      .notNull()
-      .references(() => expertiseLessons.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id').notNull(),
+    lessonId: uuid('lesson_id').notNull(),
     domainId: varchar255('domain_id')
       .notNull()
       .references(() => expertiseDomains.id, { onDelete: 'cascade' }),
@@ -540,6 +540,16 @@ export const expertiseHits = pgTable(
     createdAt: timestamptz('created_at').notNull().defaultNow(),
   },
   (t) => [
+    foreignKey({
+      columns: [t.runId, t.domainId],
+      foreignColumns: [expertiseRuns.id, expertiseRuns.domainId],
+      name: 'expertise_hits_run_domain_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [t.lessonId, t.domainId],
+      foreignColumns: [expertiseLessons.id, expertiseLessons.domainId],
+      name: 'expertise_hits_lesson_domain_fk',
+    }).onDelete('cascade'),
     index('expertise_hits_lesson_created_idx').on(t.lessonId, t.createdAt),
     index('expertise_hits_run_idx').on(t.runId),
     index('expertise_hits_domain_outcome_idx').on(t.domainId, t.outcome),
@@ -629,6 +639,11 @@ export const expertiseDomainSnapshots = pgTable(
     capturedAt: timestamptz('captured_at').notNull().defaultNow(),
   },
   (t) => [
+    foreignKey({
+      columns: [t.runId, t.domainId],
+      foreignColumns: [expertiseRuns.id, expertiseRuns.domainId],
+      name: 'expertise_domain_snapshots_run_domain_fk',
+    }),
     uniqueIndex('expertise_domain_snapshots_domain_run_index_unique').on(t.domainId, t.runIndex),
     index('expertise_domain_snapshots_domain_captured_idx').on(t.domainId, t.capturedAt),
     index('expertise_domain_snapshots_pending_fit_idx')
