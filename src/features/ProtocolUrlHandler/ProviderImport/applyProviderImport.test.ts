@@ -30,9 +30,9 @@ describe('applyProviderImport', () => {
     vi.restoreAllMocks();
     vi.spyOn(aiProviderService, 'getAiProviderById').mockResolvedValue(undefined);
     vi.spyOn(aiProviderService, 'createAiProvider').mockResolvedValue('example-provider');
-    vi.spyOn(aiProviderService, 'updateAiProvider').mockResolvedValue(undefined);
-    vi.spyOn(aiProviderService, 'updateAiProviderConfig').mockResolvedValue(undefined);
-    vi.spyOn(aiProviderService, 'toggleProviderEnabled').mockResolvedValue(undefined);
+    vi.spyOn(aiProviderService, 'updateAiProvider').mockResolvedValue([]);
+    vi.spyOn(aiProviderService, 'updateAiProviderConfig').mockResolvedValue([]);
+    vi.spyOn(aiProviderService, 'toggleProviderEnabled').mockResolvedValue([]);
     vi.spyOn(aiModelService, 'batchUpdateAiModels').mockResolvedValue([]);
     vi.spyOn(aiModelService, 'batchToggleAiModels').mockResolvedValue(undefined);
     vi.spyOn(useAiInfraStore.getState(), 'refreshAiProviderList').mockResolvedValue(undefined);

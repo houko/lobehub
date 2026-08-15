@@ -69,10 +69,10 @@ const ProtocolUrlHandler = () => {
 
     void ensureElectronIpc()
       .providerImport.listPending()
-      .then((previews) => {
+      .then((previews: ProviderImportPreview[]) => {
         if (active) previews.forEach(showProviderImport);
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         console.error('Failed to list pending provider imports', error);
       });
 

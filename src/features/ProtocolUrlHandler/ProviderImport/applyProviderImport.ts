@@ -22,8 +22,10 @@ export const applyProviderImport = async (
     throw new ProviderOverwriteNotConfirmedError();
   }
 
+  const existingSettings = existing?.settings;
   const settings = {
-    ...existing?.settings,
+    ...existingSettings,
+    searchMode: existingSettings?.searchMode === 'tool' ? undefined : existingSettings?.searchMode,
     sdkType: 'openai' as const,
     supportResponsesApi: true,
   };
