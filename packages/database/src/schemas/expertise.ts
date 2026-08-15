@@ -187,7 +187,7 @@ export const expertiseDomains = pgTable(
     /** 种子那次实践必然饱和，不计入成熟度判断。 */
     seedState: text('seed_state', { enum: EXPERTISE_SEED_STATES }).notNull().default('seeding'),
     /** 不加 FK，避免与 runs 循环引用；由 service 保证一致。 */
-    seedRunId: varchar255('seed_run_id'),
+    seedRunId: uuid('seed_run_id'),
 
     ...timestamps,
   },
@@ -285,9 +285,7 @@ export type NewExpertiseBinding = typeof expertiseBindings.$inferInsert;
 export const expertiseLessons = pgTable(
   'expertise_lessons',
   {
-    id: varchar255('id')
-      .$defaultFn(() => idGenerator('expertiseLessons'))
-      .primaryKey(),
+    id: uuid('id').defaultRandom().primaryKey(),
     domainId: varchar255('domain_id')
       .notNull()
       .references(() => expertiseDomains.id, { onDelete: 'cascade' }),
@@ -319,17 +317,16 @@ export const expertiseLessons = pgTable(
     canonAnchor: text('canon_anchor'),
 
     /** 教会我们这条的那次实践与那条命中。 */
-    originRunId: varchar255('origin_run_id'),
-    originHitId: varchar255('origin_hit_id'),
+    originRunId: uuid('origin_run_id'),
+    originHitId: uuid('origin_hit_id'),
 
     /** 新学的默认进库，所以没有 candidate；守门靠事后淘汰而不是事前审批。 */
     status: text('status', { enum: EXPERTISE_LESSON_STATUSES }).notNull().default('active'),
     /** rejected 是回收站不是删除 —— 被过滤掉的条目里常有内核裹在实现外壳里。 */
     rejectedReason: text('rejected_reason'),
-    salvagedFromId: varchar255('salvaged_from_id').references(
-      (): AnyPgColumn => expertiseLessons.id,
-      { onDelete: 'set null' },
-    ),
+    salvagedFromId: uuid('salvaged_from_id').references((): AnyPgColumn => expertiseLessons.id, {
+      onDelete: 'set null',
+    }),
     retiredAt: timestamptz('retired_at'),
 
     /** 经验的终点：被编译成一条机器能跑的判据。心智模型层的永远是 not-compilable。 */
@@ -350,7 +347,7 @@ export const expertiseLessons = pgTable(
     hitRunCount: integer('hit_run_count').notNull().default(0),
     falsePositiveCount: integer('false_positive_count').notNull().default(0),
     lastHitAt: timestamptz('last_hit_at'),
-    lastHitRunId: varchar255('last_hit_run_id'),
+    lastHitRunId: uuid('last_hit_run_id'),
 
     /**
      * 合并时指向被泛化掉的母规则，用于追溯「这条是从哪几条并出来的」。
@@ -388,10 +385,8 @@ export type NewExpertiseLesson = typeof expertiseLessons.$inferInsert;
 export const expertiseLessonRevisions = pgTable(
   'expertise_lesson_revisions',
   {
-    id: varchar255('id')
-      .$defaultFn(() => idGenerator('expertiseLessonRevisions'))
-      .primaryKey(),
-    lessonId: varchar255('lesson_id')
+    id: uuid('id').defaultRandom().primaryKey(),
+    lessonId: uuid('lesson_id')
       .notNull()
       .references(() => expertiseLessons.id, { onDelete: 'cascade' }),
     revision: integer('revision').notNull(),
@@ -409,7 +404,7 @@ export const expertiseLessonRevisions = pgTable(
     changedByUserId: text('changed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
-    sourceRunId: varchar255('source_run_id'),
+    sourceRunId: uuid('source_run_id'),
     operationId: text('operation_id').references(() => agentOperations.id, {
       onDelete: 'set null',
     }),
@@ -441,9 +436,7 @@ export type NewExpertiseLessonRevision = typeof expertiseLessonRevisions.$inferI
 export const expertiseRuns = pgTable(
   'expertise_runs',
   {
-    id: varchar255('id')
-      .$defaultFn(() => idGenerator('expertiseRuns'))
-      .primaryKey(),
+    id: uuid('id').defaultRandom().primaryKey(),
     domainId: varchar255('domain_id')
       .notNull()
       .references(() => expertiseDomains.id, { onDelete: 'cascade' }),
@@ -516,13 +509,11 @@ export type NewExpertiseRun = typeof expertiseRuns.$inferInsert;
 export const expertiseHits = pgTable(
   'expertise_hits',
   {
-    id: varchar255('id')
-      .$defaultFn(() => idGenerator('expertiseHits'))
-      .primaryKey(),
-    runId: varchar255('run_id')
+    id: uuid('id').defaultRandom().primaryKey(),
+    runId: uuid('run_id')
       .notNull()
       .references(() => expertiseRuns.id, { onDelete: 'cascade' }),
-    lessonId: varchar255('lesson_id')
+    lessonId: uuid('lesson_id')
       .notNull()
       .references(() => expertiseLessons.id, { onDelete: 'cascade' }),
     domainId: varchar255('domain_id')
@@ -580,13 +571,11 @@ export type NewExpertiseHit = typeof expertiseHits.$inferInsert;
 export const expertiseDomainSnapshots = pgTable(
   'expertise_domain_snapshots',
   {
-    id: varchar255('id')
-      .$defaultFn(() => idGenerator('expertiseSnapshots'))
-      .primaryKey(),
+    id: uuid('id').defaultRandom().primaryKey(),
     domainId: varchar255('domain_id')
       .notNull()
       .references(() => expertiseDomains.id, { onDelete: 'cascade' }),
-    runId: varchar255('run_id').references(() => expertiseRuns.id, { onDelete: 'set null' }),
+    runId: uuid('run_id').references(() => expertiseRuns.id, { onDelete: 'set null' }),
     runIndex: integer('run_index').notNull(),
 
     // ---- 事件驱动写入 ----
@@ -668,9 +657,7 @@ export type NewExpertiseDomainSnapshot = typeof expertiseDomainSnapshots.$inferI
 export const expertiseInsights = pgTable(
   'expertise_insights',
   {
-    id: varchar255('id')
-      .$defaultFn(() => idGenerator('expertiseInsights'))
-      .primaryKey(),
+    id: uuid('id').defaultRandom().primaryKey(),
     /** 可为空：有些洞察是跨领域的。 */
     domainId: varchar255('domain_id').references(() => expertiseDomains.id, {
       onDelete: 'cascade',
