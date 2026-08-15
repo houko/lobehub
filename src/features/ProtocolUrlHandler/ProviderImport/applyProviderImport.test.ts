@@ -25,14 +25,22 @@ const payload: ProviderImportPayload = {
   version: 1,
 };
 
+const emptyQueryResult = {
+  command: '',
+  fields: [],
+  oid: 0,
+  rowCount: 0,
+  rows: [],
+};
+
 describe('applyProviderImport', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(aiProviderService, 'getAiProviderById').mockResolvedValue(undefined);
     vi.spyOn(aiProviderService, 'createAiProvider').mockResolvedValue('example-provider');
-    vi.spyOn(aiProviderService, 'updateAiProvider').mockResolvedValue([]);
-    vi.spyOn(aiProviderService, 'updateAiProviderConfig').mockResolvedValue([]);
-    vi.spyOn(aiProviderService, 'toggleProviderEnabled').mockResolvedValue([]);
+    vi.spyOn(aiProviderService, 'updateAiProvider').mockResolvedValue(emptyQueryResult);
+    vi.spyOn(aiProviderService, 'updateAiProviderConfig').mockResolvedValue(emptyQueryResult);
+    vi.spyOn(aiProviderService, 'toggleProviderEnabled').mockResolvedValue(emptyQueryResult);
     vi.spyOn(aiModelService, 'batchUpdateAiModels').mockResolvedValue([]);
     vi.spyOn(aiModelService, 'batchToggleAiModels').mockResolvedValue(undefined);
     vi.spyOn(useAiInfraStore.getState(), 'refreshAiProviderList').mockResolvedValue(undefined);
