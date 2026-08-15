@@ -1,6 +1,7 @@
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createTRPCErrorLogger } from '@/libs/trpc/utils/errorLogger';
 import { verifyRouter } from '@/server/routers/lambda/verify';
 import { FileService } from '@/server/services/file';
 import type * as VerifyServiceModule from '@/server/services/verify';
@@ -103,6 +104,16 @@ describe('verifyRouter', () => {
         message: 'InvalidProviderAPIKey',
       });
       expect(getHTTPStatusCodeFromError(error)).toBe(412);
+
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      createTRPCErrorLogger('/api/trpc')({
+        error,
+        path: 'verify.generateCriteria',
+        type: 'mutation',
+      });
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
     });
 
     it('does not rewrite unrelated generation failures', async () => {
