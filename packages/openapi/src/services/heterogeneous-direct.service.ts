@@ -5,7 +5,13 @@ import type {
   OpenAIChatMessage,
   UserMessageContentPart,
 } from '@lobechat/model-runtime';
-import { RequestTrigger } from '@lobechat/types';
+import type { CodexReasoningEffort } from '@lobechat/types';
+import {
+  getCodexReasoningEffortLevels,
+  isCodexServerDefaultCustomModel,
+  RequestTrigger,
+  SERVER_DEFAULT_HETEROGENEOUS_MODEL_ALIAS,
+} from '@lobechat/types';
 import { isRecord } from '@lobechat/utils/object';
 
 import type { ServerDefaultHeterogeneousAgentType } from '@/server/modules/ModelRuntime';
@@ -14,9 +20,9 @@ import {
   resolveServerDefaultHeterogeneousModel,
 } from '@/server/modules/ModelRuntime';
 
-import type { BaseStreamEvent } from '../types/responses.type';
+import type { BaseStreamEvent, ResponseUsage } from '../types/responses.type';
 
-export const SERVER_DEFAULT_MODEL_ALIAS = 'lobehub-default';
+export const SERVER_DEFAULT_MODEL_ALIAS = SERVER_DEFAULT_HETEROGENEOUS_MODEL_ALIAS;
 
 const textFromParts = (content: unknown): string => {
   if (typeof content === 'string') return content;
@@ -199,18 +205,30 @@ export const normalizeResponsesRequest = (request: Record<string, unknown>, mode
           >[number],
         );
       } else if (item.type === 'function_call' && typeof item.call_id === 'string') {
-        messages.push({
-          content: '',
-          role: 'assistant',
-          ...takePendingReasoning(),
-          tool_calls: [
-            {
-              function: { arguments: String(item.arguments || ''), name: String(item.name || '') },
-              id: item.call_id,
-              type: 'function',
-            },
-          ],
-        });
+        const toolCall = {
+          function: { arguments: String(item.arguments || ''), name: String(item.name || '') },
+          id: item.call_id,
+          type: 'function' as const,
+        };
+        const previousMessage = messages.at(-1);
+
+        // Responses history records every parallel call before their outputs.
+        // Chat Completions requires those calls in one assistant message, followed
+        // by the contiguous batch of tool-result messages.
+        if (
+          !pendingReasoningItems?.length &&
+          previousMessage?.role === 'assistant' &&
+          previousMessage.tool_calls?.length
+        ) {
+          previousMessage.tool_calls.push(toolCall);
+        } else {
+          messages.push({
+            content: '',
+            role: 'assistant',
+            ...takePendingReasoning(),
+            tool_calls: [toolCall],
+          });
+        }
       } else if (item.type === 'function_call_output' && typeof item.call_id === 'string') {
         messages.push({
           content: String(item.output || ''),
@@ -218,7 +236,7 @@ export const normalizeResponsesRequest = (request: Record<string, unknown>, mode
           tool_call_id: item.call_id,
         });
       } else if (
-        item.type === 'message' &&
+        (item.type === undefined || item.type === 'message') &&
         ['assistant', 'developer', 'system', 'user'].includes(String(item.role))
       ) {
         messages.push({
@@ -320,14 +338,48 @@ const parseProtocolStream = (stream: ReadableStream<Uint8Array>) => {
 
 const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
-export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
+const nonNegativeNumber = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+};
+
+interface AnthropicStreamUsage {
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+/**
+ * Map a LobeHub protocol `usage` event onto Anthropic `message_delta.usage`.
+ * `message_start` is emitted before upstream usage exists, so Claude Code treats
+ * this snapshot as the final turn total (input + cache + output).
+ */
+const toAnthropicStreamUsage = (data: Record<string, unknown>): AnthropicStreamUsage => {
+  const cached = nonNegativeNumber(data.inputCachedTokens);
+  const written = nonNegativeNumber(data.inputWriteCacheTokens);
+  const totalInput = nonNegativeNumber(data.totalInputTokens) ?? 0;
+  const miss = nonNegativeNumber(data.inputCacheMissTokens);
+  const hasCache = (cached ?? 0) > 0 || (written ?? 0) > 0;
+
+  return {
+    ...(written ? { cache_creation_input_tokens: written } : {}),
+    ...(cached ? { cache_read_input_tokens: cached } : {}),
+    input_tokens: hasCache
+      ? (miss ?? Math.max(0, totalInput - (cached ?? 0) - (written ?? 0)))
+      : totalInput,
+    output_tokens: nonNegativeNumber(data.totalOutputTokens) ?? 0,
+  };
+};
+
+export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>, model: string) => {
   const messageId = `msg_${randomUUID().replaceAll('-', '')}`;
   let finalized = false;
   let nextIndex = 0;
   let stopReason: string | undefined;
   let textIndex: number | undefined;
   let thinkingIndex: number | undefined;
-  let usage = { input_tokens: 0, output_tokens: 0 };
+  let usage: AnthropicStreamUsage = { input_tokens: 0, output_tokens: 0 };
   const tools = new Map<number, { blockIndex: number; id: string; name: string }>();
   const closeTextBlocks = (controller: TransformStreamDefaultController<string>) => {
     for (const index of [textIndex, thinkingIndex]) {
@@ -357,7 +409,7 @@ export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
           stop_sequence: null,
         },
         type: 'message_delta',
-        usage: { output_tokens: usage.output_tokens },
+        usage,
       }),
     );
     controller.enqueue(sse('message_stop', { type: 'message_stop' }));
@@ -371,7 +423,7 @@ export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
               message: {
                 content: [],
                 id: messageId,
-                model: SERVER_DEFAULT_MODEL_ALIAS,
+                model,
                 role: 'assistant',
                 stop_reason: null,
                 type: 'message',
@@ -383,8 +435,22 @@ export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
         },
         transform(event, controller) {
           if (finalized) return;
-          if (event.type === 'text' || event.type === 'reasoning') {
-            const isThinking = event.type === 'reasoning';
+          const part =
+            (event.type === 'content_part' || event.type === 'reasoning_part') &&
+            isRecord(event.data) &&
+            event.data.partType === 'text'
+              ? event.data
+              : undefined;
+          const content =
+            event.type === 'text' || event.type === 'reasoning'
+              ? typeof event.data === 'string'
+                ? event.data
+                : undefined
+              : typeof part?.content === 'string'
+                ? part.content
+                : undefined;
+          if (content !== undefined) {
+            const isThinking = event.type === 'reasoning' || event.type === 'reasoning_part';
             let index = isThinking ? thinkingIndex : textIndex;
             if (index === undefined) {
               closeTextBlocks(controller);
@@ -401,19 +467,26 @@ export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
               if (isThinking) thinkingIndex = index;
               else textIndex = index;
             }
+            if (content) {
+              controller.enqueue(
+                sse('content_block_delta', {
+                  delta: isThinking
+                    ? { thinking: content, type: 'thinking_delta' }
+                    : { text: content, type: 'text_delta' },
+                  index,
+                  type: 'content_block_delta',
+                }),
+              );
+            }
+          } else if (
+            event.type === 'reasoning_signature' &&
+            thinkingIndex !== undefined &&
+            typeof event.data === 'string' &&
+            event.data
+          ) {
             controller.enqueue(
               sse('content_block_delta', {
-                delta: isThinking
-                  ? { thinking: String(event.data), type: 'thinking_delta' }
-                  : { text: String(event.data), type: 'text_delta' },
-                index,
-                type: 'content_block_delta',
-              }),
-            );
-          } else if (event.type === 'reasoning_signature' && thinkingIndex !== undefined) {
-            controller.enqueue(
-              sse('content_block_delta', {
-                delta: { signature: String(event.data), type: 'signature_delta' },
+                delta: { signature: event.data, type: 'signature_delta' },
                 index: thinkingIndex,
                 type: 'content_block_delta',
               }),
@@ -449,10 +522,7 @@ export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
                 );
             }
           } else if (event.type === 'usage' && isRecord(event.data)) {
-            usage = {
-              input_tokens: Number(event.data.totalInputTokens || 0),
-              output_tokens: Number(event.data.totalOutputTokens || 0),
-            };
+            usage = toAnthropicStreamUsage(event.data);
           } else if (event.type === 'stop') {
             const reason = typeof event.data === 'string' ? event.data : undefined;
             if (!stopReason && reason && reason !== 'message_stop') stopReason = reason;
@@ -479,7 +549,7 @@ export const encodeAnthropicStream = (source: ReadableStream<Uint8Array>) => {
     .pipeThrough(new TextEncoderStream());
 };
 
-export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
+export const encodeResponsesStream = (source: ReadableStream<Uint8Array>, model: string) => {
   const responseId = `resp_${randomUUID().replaceAll('-', '')}`;
   let finalized = false;
   let nextOutputIndex = 0;
@@ -491,7 +561,7 @@ export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
   let stopReason: unknown;
   let textOutputIndex: number | undefined;
   let outputText = '';
-  let usage: { input_tokens: number; output_tokens: number; total_tokens: number } | undefined;
+  let usage: ResponseUsage | undefined;
   const toolItems = new Map<
     number,
     { arguments: string; callId: string; id: string; name: string; outputIndex: number }
@@ -502,7 +572,7 @@ export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
     id: responseId,
     incomplete_details: null,
     instructions: null,
-    model: SERVER_DEFAULT_MODEL_ALIAS,
+    model,
     object: 'response',
     output: [],
     status: 'in_progress',
@@ -668,8 +738,8 @@ export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
         },
         transform(event, controller) {
           if (finalized) return;
-          if (event.type === 'text') {
-            outputText += String(event.data);
+          if (event.type === 'text' && typeof event.data === 'string' && event.data) {
+            outputText += event.data;
             if (textOutputIndex === undefined) {
               textOutputIndex = nextOutputIndex++;
               controller.enqueue(
@@ -698,14 +768,14 @@ export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
             controller.enqueue(
               responseSse('response.output_text.delta', {
                 content_index: 0,
-                delta: String(event.data),
+                delta: event.data,
                 item_id: `msg_${responseId}`,
                 output_index: textOutputIndex,
                 type: 'response.output_text.delta',
               }),
             );
-          } else if (event.type === 'reasoning') {
-            reasoningText += String(event.data);
+          } else if (event.type === 'reasoning' && typeof event.data === 'string' && event.data) {
+            reasoningText += event.data;
             if (reasoningOutputIndex === undefined) {
               reasoningItemId = event.id || `rs_${responseId}`;
               reasoningOutputIndex = nextOutputIndex++;
@@ -724,7 +794,7 @@ export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
             }
             controller.enqueue(
               responseSse('response.reasoning_summary_text.delta', {
-                delta: String(event.data),
+                delta: event.data,
                 item_id: reasoningItemId,
                 output_index: reasoningOutputIndex,
                 summary_index: 0,
@@ -775,11 +845,17 @@ export const encodeResponsesStream = (source: ReadableStream<Uint8Array>) => {
               }
             }
           } else if (event.type === 'usage' && isRecord(event.data)) {
-            const inputTokens = Number(event.data.totalInputTokens || 0);
-            const outputTokens = Number(event.data.totalOutputTokens || 0);
+            const inputTokens = nonNegativeNumber(event.data.totalInputTokens) ?? 0;
+            const outputTokens = nonNegativeNumber(event.data.totalOutputTokens) ?? 0;
             usage = {
               input_tokens: inputTokens,
+              input_tokens_details: {
+                cached_tokens: nonNegativeNumber(event.data.inputCachedTokens) ?? 0,
+              },
               output_tokens: outputTokens,
+              output_tokens_details: {
+                reasoning_tokens: nonNegativeNumber(event.data.outputReasoningTokens) ?? 0,
+              },
               total_tokens: inputTokens + outputTokens,
             };
           } else if (event.type === 'stop') {
@@ -823,15 +899,38 @@ export const invokeServerDefaultModel = async (params: {
     params.agentType,
     params.model,
   );
-  const { deploymentName } = resolvedModel;
+  const { deploymentName, supportsAdaptiveThinking } = resolvedModel;
   const model = deploymentName ?? resolvedModel.model;
   const runtime = await initModelRuntimeFromServerConfig({
     actorUserId: params.userId,
     workspaceId: params.workspaceId,
   });
+  const normalizedPayload = { ...params.payload };
+  if (
+    params.agentType === 'claude-code' &&
+    normalizedPayload.thinking?.type === 'adaptive' &&
+    !supportsAdaptiveThinking
+  ) {
+    delete normalizedPayload.thinking;
+  }
+  const { reasoning, ...chatCompletionsPayload } = normalizedPayload;
+  const requestedReasoningEffort = reasoning?.effort;
+  const reasoningEffort = getCodexReasoningEffortLevels(params.model).includes(
+    requestedReasoningEffort as CodexReasoningEffort,
+  )
+    ? (requestedReasoningEffort as ChatStreamPayload['reasoning_effort'])
+    : undefined;
+  const payload =
+    params.agentType === 'codex' && isCodexServerDefaultCustomModel(params.model)
+      ? {
+          ...chatCompletionsPayload,
+          apiMode: 'chatCompletion' as const,
+          reasoning_effort: normalizedPayload.reasoning_effort ?? reasoningEffort,
+        }
+      : normalizedPayload;
   const response = await runtime.chat(
     {
-      ...params.payload,
+      ...payload,
       model,
       stream: true,
     },
@@ -839,4 +938,51 @@ export const invokeServerDefaultModel = async (params: {
   );
   if (!response.body) throw new Error('Model runtime returned an empty stream');
   return { model, response };
+};
+
+const readMessage = (value: unknown): string | undefined => {
+  if (typeof value === 'string') return value;
+  if (!isRecord(value)) return undefined;
+  if (typeof value.message === 'string') return value.message;
+  return undefined;
+};
+
+/**
+ * Describe a failed relay in terms its caller can act on.
+ *
+ * `runtime.chat` rejects with a plain `{ error, errorType, provider }` object
+ * rather than an `Error`, and Hono's default handler cannot serialise that: an
+ * uncaught one leaves the client a **500 with an empty body**. That is how an
+ * Ark rejection ("The parameter `type` specified in the request are not valid:
+ * invalid value adaptive") reached Claude Code — as `API Error: 500 status code
+ * (no body)`, retried for a minute and a half because nothing in the response
+ * said it could never succeed.
+ *
+ * The upstream's own status is deliberately not forwarded: `handleOpenAIError`
+ * keeps the provider's error body and drops the status whenever there is one,
+ * so any status here would be invented. 502 says what is actually known — the
+ * request reached us, and the hop past us failed — and the message carries the
+ * provider's own words, which is the part that was missing.
+ */
+export const describeRelayFailure = (error: unknown) => {
+  const payload = isRecord(error) ? error : undefined;
+  const message =
+    readMessage(payload) ??
+    readMessage(payload?.error) ??
+    (payload?.error === undefined ? undefined : JSON.stringify(payload.error)) ??
+    String(error);
+  const provider = typeof payload?.provider === 'string' ? payload.provider : undefined;
+  const errorType = payload?.errorType;
+
+  return {
+    // Never empty. A blank message here would put the caller back where the
+    // bodyless 500 left it — a failure with no way to tell what failed — and
+    // `String(error)` is blank for a thrown empty string.
+    message:
+      [provider && `[${provider}]`, errorType && `${String(errorType)}:`, message]
+        .filter(Boolean)
+        .join(' ')
+        .trim() || 'Model runtime failed without a message',
+    status: 502 as const,
+  };
 };

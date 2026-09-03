@@ -50,7 +50,7 @@ describe('Protocol', () => {
           type: 'http',
           url: 'https://api.smithery.ai/v1/mcp',
           headers: {
-            Authorization: 'Bearer token123',
+            'Authorization': 'Bearer token123',
             'X-Custom-Header': 'value',
           },
         },

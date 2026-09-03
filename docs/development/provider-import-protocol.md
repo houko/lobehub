@@ -25,7 +25,13 @@ arrives.
 
 ```json
 {
-  "version": 1,
+  "models": [
+    {
+      "id": "example-model",
+      "displayName": "Example Model",
+      "contextWindowTokens": 128000
+    }
+  ],
   "provider": {
     "id": "example-provider",
     "name": "Example Provider",
@@ -37,13 +43,7 @@ arrives.
     "enableResponsesApi": false,
     "fetchOnClient": false
   },
-  "models": [
-    {
-      "id": "example-model",
-      "displayName": "Example Model",
-      "contextWindowTokens": 128000
-    }
-  ]
+  "version": 1
 }
 ```
 

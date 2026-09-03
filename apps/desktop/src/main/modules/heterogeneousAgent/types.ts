@@ -47,14 +47,28 @@ export interface PrepareProviderBindingContext {
   args: string[];
   env?: Record<string, string>;
   profileDir: string;
-  reference: HeterogeneousProviderBindingReference;
+  reference: Extract<HeterogeneousProviderBindingReference, { kind: 'provider' }>;
   resolution: HeterogeneousProviderBindingResolution;
   runDir: string;
 }
 
+export interface PrepareServerDefaultBindingContext {
+  args: string[];
+  endpoint: string;
+  env?: Record<string, string>;
+  model: string;
+  profileDir: string;
+}
+
 export interface ProviderBindingPlan {
   args: string[];
+  /** Release transient resources created while preparing the binding. */
+  cleanup?: () => Promise<void>;
+  /** Best-effort synchronous release for app shutdown. */
+  cleanupSync?: () => void;
   env: Record<string, string>;
+  /** Environment variable that receives the per-prompt server operation token. */
+  operationTokenEnvKey?: string;
   profileFiles?: ProviderBindingFilePlan[];
   runFiles?: ProviderBindingFilePlan[];
 }
@@ -70,5 +84,8 @@ export interface HeterogeneousAgentDriver {
   ) => Promise<HeterogeneousAgentBuildPlan>;
   prepareProviderBinding?: (
     context: PrepareProviderBindingContext,
+  ) => Promise<ProviderBindingPlan> | ProviderBindingPlan;
+  prepareServerDefaultBinding?: (
+    context: PrepareServerDefaultBindingContext,
   ) => Promise<ProviderBindingPlan> | ProviderBindingPlan;
 }

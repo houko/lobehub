@@ -21,17 +21,22 @@ const PENDING_IMPORT_TTL_MS = 2 * 60_000;
 const MAX_CALLBACK_BYTES = 256 * 1024;
 const MAX_MODEL_ID_LENGTH = 150;
 const MAX_MODEL_DISPLAY_NAME_LENGTH = 200;
-const CALLBACK_PATH_PATTERN = /^\/lobehub\/provider-import\/[A-Za-z\d_-]{32,128}$/;
+const CALLBACK_PATH_PATTERN = /^\/lobehub\/provider-import\/[\w-]{32,128}$/;
 const PROVIDER_ID_PATTERN = /^[\d_a-z](?:[\d_a-z-]{0,62}[\d_a-z])?$/;
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F]/;
 const directLoopbackDispatcher = new Agent();
+
+const hasControlCharacter = (value: string) =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
 
 const boundedIdentifier = (maxLength: number) =>
   z
     .string()
     .min(1)
     .max(maxLength)
-    .refine((value) => value === value.trim() && !CONTROL_CHARACTER_PATTERN.test(value));
+    .refine((value) => value === value.trim() && !hasControlCharacter(value));
 
 const baseURLSchema = z
   .url()

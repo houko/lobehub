@@ -1,8 +1,8 @@
 'use client';
 
 import type { ProviderImportPayload, ProviderImportPreview } from '@lobechat/electron-client-ipc';
-import { Flexbox, Text } from '@lobehub/ui';
-import { Alert, Button, ModalFooter, toast, useModalContext } from '@lobehub/ui/base-ui';
+import { Flexbox } from '@lobehub/ui';
+import { Alert, Button, ModalFooter, Text, toast, useModalContext } from '@lobehub/ui/base-ui';
 import { cssVar } from 'antd-style';
 import { memo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

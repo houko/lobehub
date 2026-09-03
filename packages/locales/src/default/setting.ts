@@ -403,8 +403,9 @@ export default {
   'heterogeneousStatus.apiMode.configureProvider': 'Go to provider settings',
   'heterogeneousStatus.apiMode.enableInLabs': 'Enable in Labs',
   'heterogeneousStatus.apiMode.labDisabled':
-    'Provider binding is a Labs experiment. Enable it to use a configured API provider instead of the agent subscription.',
+    'API mode is a Labs experiment. Enable it to use the LobeHub default provider or a configured API provider instead of the agent subscription.',
   'heterogeneousStatus.apiMode.localOnly': 'Available only for Desktop local execution',
+  'heterogeneousStatus.apiMode.defaultProvider': 'LobeHub',
   'heterogeneousStatus.apiMode.model': 'Model',
   'heterogeneousStatus.apiMode.modelPlaceholder': 'Select a model',
   'heterogeneousStatus.apiMode.noProviders':
@@ -415,7 +416,21 @@ export default {
   'heterogeneousStatus.apiMode.smallFastModelDesc':
     'Used for session titles, summaries, and other background work. Does not change the main conversation.',
   'heterogeneousStatus.apiMode.smallFastModelPlaceholder': 'Same as primary model',
+  'heterogeneousStatus.apiMode.provider': 'Provider',
+  'heterogeneousStatus.apiMode.providerPlaceholder': 'Select a provider',
   'heterogeneousStatus.apiMode.workspaceUnsupported': 'Not available for workspace agents',
+  'heterogeneousStatus.apiMode.serverDefault.checking': 'Checking deployment provider...',
+  'heterogeneousStatus.apiMode.serverDefault.disabled':
+    'The deployment administrator has disabled the default API provider for heterogeneous agents.',
+  'heterogeneousStatus.apiMode.serverDefault.invalidConfiguration':
+    'The deployment provider or its compatible models are not configured.',
+  'heterogeneousStatus.apiMode.serverDefault.loadFailed':
+    'Could not check the deployment provider.',
+  'heterogeneousStatus.apiMode.serverDefault.noModels':
+    'No compatible models are available from the deployment provider.',
+  'heterogeneousStatus.apiMode.serverDefault.retry': 'Retry',
+  'heterogeneousStatus.apiMode.serverDefault.unsupported':
+    'The deployment provider does not expose a compatible model for this CLI.',
   'heterogeneousStatus.auth.api': 'API',
   'heterogeneousStatus.auth.label': 'Auth Method',
   'heterogeneousStatus.auth.subscription': 'Subscription',
@@ -831,6 +846,9 @@ export default {
   'notification.item.subscription_payment_failed': 'Subscription renewal payment failed',
   'notification.item.subscription_plan_changed': 'Subscription plan changed',
   'notification.item.subscription_renewed': 'Subscription renewed',
+  'notification.item.task_assigned': 'Task assigned to you',
+  'notification.item.task_comment_activity': 'Task comment activity',
+  'notification.item.task_comment_mentioned': 'Mentioned in a task comment',
   'notification.item.topic_comment_activity': 'Comment activity',
   'notification.item.topic_comment_mentioned': 'Mentioned in a comment',
   'notification.item.video_generation_completed': 'Video generation completed',
@@ -1017,6 +1035,21 @@ export default {
   'settingAppearance.contextMenuMode.disabled': 'Disabled',
   'settingAppearance.contextMenuMode.title': 'Right-Click Menu Mode',
   'settingAppearance.desktop.title': 'Desktop',
+  'settingAppearance.font.fontFamily.default': 'System Default',
+  'settingAppearance.font.fontFamily.desc':
+    'Choose a font installed on this device for the whole interface. System Default follows the built-in font stack of your current language.',
+  'settingAppearance.font.fontFamily.loadError':
+    'System fonts could not be loaded. System Default remains available.',
+  'settingAppearance.font.fontFamily.title': 'Interface Font',
+  'settingAppearance.font.fontFamily.unavailable': '{{font}} (Unavailable on this device)',
+  'settingAppearance.font.monospace.default': 'System Default',
+  'settingAppearance.font.monospace.desc':
+    'Used by code blocks and the built-in terminal. Choose a monospaced font installed on this device.',
+  'settingAppearance.font.monospace.loadError':
+    'System fonts could not be loaded. System Default remains available.',
+  'settingAppearance.font.monospace.title': 'Monospace Font',
+  'settingAppearance.font.monospace.unavailable': '{{font}} (Unavailable on this device)',
+  'settingAppearance.font.title': 'Font',
   'settingAppearance.neutralColor.desc': 'Custom grayscale with different color tendencies',
   'settingAppearance.neutralColor.title': 'Neutral Color',
   'settingAppearance.noAnimation.desc': 'Disable all animation effects in the application',
@@ -1024,14 +1057,6 @@ export default {
   'settingAppearance.preview.title': 'Color Palette',
   'settingAppearance.primaryColor.desc': 'Custom theme color',
   'settingAppearance.primaryColor.title': 'Theme Color',
-  'settingAppearance.terminal.fontFamily.desc':
-    'Choose a monospaced font installed on this device. Select Application Default to use the application code font.',
-  'settingAppearance.terminal.fontFamily.default': 'Application Default',
-  'settingAppearance.terminal.fontFamily.loadError':
-    'System fonts could not be loaded. Application Default remains available.',
-  'settingAppearance.terminal.fontFamily.title': 'Monospace Font',
-  'settingAppearance.terminal.fontFamily.unavailable': '{{font}} (Unavailable on this device)',
-  'settingAppearance.terminal.title': 'Terminal',
   'settingAppearance.title': 'Application Appearance',
   'settingChat.chatStyleType.title': 'Chat Window Style',
   'settingChat.chatStyleType.type.chat': 'Conversation Mode',
@@ -1066,6 +1091,8 @@ export default {
   'settingChatAppearance.autoScrollOnStreaming.desc':
     'Automatically scroll to bottom when AI is generating response',
   'settingChatAppearance.autoScrollOnStreaming.title': 'Auto-scroll During AI Response',
+  'settingChatAppearance.chatBehavior.title': 'Chat Behavior',
+  'settingChatAppearance.workflowStreamingExpand.title': 'Expand Tool Steps While Running',
   'settingChatAppearance.fontSize.desc': 'Font size of messages',
   'settingChatAppearance.fontSize.marks.normal': 'Standard',
   'settingChatAppearance.fontSize.title': 'Font Size',
@@ -2832,6 +2859,8 @@ When I am ___, I need ___
   'workspace.waitlistPage.enabledTitle': 'Workspace is ready for you',
   'workspace.waitlistPage.entryCta': 'Join Workspace Beta',
   'workspace.waitlistPage.goHome': 'Back to LobeHub',
+  'workspace.waitlistPage.learnMore': 'Learn more about Workspace',
+  'workspace.waitlistPage.learnMoreNewTabHint': 'Opens in a new tab',
   'workspace.waitlistPage.organizationLabel': 'Organization / Group (optional)',
   'workspace.waitlistPage.organizationPlaceholder': 'Company, school, or family…',
   'workspace.waitlistPage.pendingSubtitle':
@@ -3367,9 +3396,6 @@ When I am ___, I need ___
   'tools.builtins.lobe-creds.description':
     'Manage user credentials for authentication, environment variable injection, and API verification — handle API keys, OAuth tokens, and secrets for third-party integrations.',
   'tools.builtins.lobe-creds.title': 'Credentials',
-  'tools.builtins.lobe-cron.description':
-    'Manage scheduled tasks that run automatically at specified times. Create, update, enable/disable, and monitor recurring tasks for your agents.',
-  'tools.builtins.lobe-cron.title': 'Scheduled Tasks',
   'tools.builtins.lobe-group-agent-builder.description':
     'Configure group metadata, members, and shared content for multi-agent groups',
   'tools.builtins.lobe-group-agent-builder.title': 'Group Agent Builder',
@@ -3400,7 +3426,7 @@ When I am ___, I need ___
   'tools.builtins.lobe-skills.description': 'Activate and use reusable skill packages',
   'tools.builtins.lobe-skills.title': 'Skills',
   'tools.builtins.lobe-task.description':
-    'Create, list, edit, and delete tasks with dependencies and review configuration',
+    'Create, schedule, list, edit, and delete tasks with dependencies and review configuration',
   'tools.builtins.lobe-task.title': 'Task Tools',
   'tools.builtins.lobe-topic-reference.description':
     'Retrieve context from referenced topic conversations',
@@ -3503,11 +3529,6 @@ When I am ___, I need ___
 
   'tools.composio.servers.figma.readme':
     'Connect to Figma to access design files and collaborate on projects. View designs, export assets, browse components, and manage your design workflow through natural conversation.',
-
-  'tools.composio.servers.github.description': 'Enhanced GitHub MCP Server',
-
-  'tools.composio.servers.github.readme':
-    'Connect to GitHub to manage repositories, issues, pull requests, and code. Search code, review changes, create branches, and collaborate on software development projects through conversational AI.',
 
   // Composio Servers i18n
   'tools.composio.servers.gmail.description': 'Gmail is a free email service provided by Google',
