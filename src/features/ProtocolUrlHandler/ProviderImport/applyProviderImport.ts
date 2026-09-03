@@ -1,9 +1,12 @@
 import type { ProviderImportPayload } from '@lobechat/electron-client-ipc';
 import { AiProviderSourceEnum } from 'model-bank/aiProvider';
 
+import { mutate } from '@/libs/swr';
+import { aiModelKeys } from '@/libs/swr/keys';
 import { aiModelService } from '@/services/aiModel';
 import { aiProviderService } from '@/services/aiProvider';
 import { useAiInfraStore } from '@/store/aiInfra';
+import { AiProviderSwrKey } from '@/store/aiInfra/slices/aiProvider/action';
 
 export class BuiltinProviderImportError extends Error {}
 export class ProviderOverwriteNotConfirmedError extends Error {}
@@ -79,7 +82,12 @@ export const applyProviderImport = async (
     }
 
     const store = useAiInfraStore.getState();
-    await Promise.all([store.refreshAiProviderList(), store.refreshAiProviderRuntimeState()]);
+    await Promise.all([
+      mutate([AiProviderSwrKey.fetchAiProviderItem, provider.id]),
+      mutate(aiModelKeys.list(provider.id)),
+      store.refreshAiProviderList(),
+      store.refreshAiProviderRuntimeState(),
+    ]);
   } catch (error) {
     if (createdProvider) throw new PartialProviderImportError();
     throw error;

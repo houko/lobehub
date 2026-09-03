@@ -2,9 +2,11 @@ import type { ProviderImportPayload } from '@lobechat/electron-client-ipc';
 import { AiProviderSourceEnum } from 'model-bank/aiProvider';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { aiModelKeys } from '@/libs/swr/keys';
 import { aiModelService } from '@/services/aiModel';
 import { aiProviderService } from '@/services/aiProvider';
 import { useAiInfraStore } from '@/store/aiInfra';
+import { AiProviderSwrKey } from '@/store/aiInfra/slices/aiProvider/action';
 
 import {
   applyProviderImport,
@@ -12,6 +14,13 @@ import {
   PartialProviderImportError,
   ProviderOverwriteNotConfirmedError,
 } from './applyProviderImport';
+
+const mocks = vi.hoisted(() => ({ mutate: vi.fn() }));
+
+vi.mock('@/libs/swr', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  mutate: mocks.mutate,
+}));
 
 const payload: ProviderImportPayload = {
   models: [{ contextWindowTokens: 128_000, displayName: 'Example Model', id: 'example/model' }],
@@ -36,6 +45,7 @@ const emptyQueryResult = {
 describe('applyProviderImport', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    mocks.mutate.mockReset().mockResolvedValue(undefined);
     vi.spyOn(aiProviderService, 'getAiProviderById').mockResolvedValue(undefined);
     vi.spyOn(aiProviderService, 'createAiProvider').mockResolvedValue('example-provider');
     vi.spyOn(aiProviderService, 'updateAiProvider').mockResolvedValue(emptyQueryResult);
@@ -120,6 +130,16 @@ describe('applyProviderImport', () => {
         fetchOnClient: true,
       }),
     );
+  });
+
+  it('revalidates the imported provider detail and model list caches', async () => {
+    await applyProviderImport(payload, { allowOverwrite: false });
+
+    expect(mocks.mutate).toHaveBeenCalledWith([
+      AiProviderSwrKey.fetchAiProviderItem,
+      'example-provider',
+    ]);
+    expect(mocks.mutate).toHaveBeenCalledWith(aiModelKeys.list('example-provider'));
   });
 
   it('refuses to replace a built-in provider', async () => {

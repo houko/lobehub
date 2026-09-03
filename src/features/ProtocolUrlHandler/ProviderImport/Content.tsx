@@ -1,12 +1,13 @@
 'use client';
 
 import type { ProviderImportPayload, ProviderImportPreview } from '@lobechat/electron-client-ipc';
-import { Flexbox } from '@lobehub/ui';
+import { Flexbox, Tooltip } from '@lobehub/ui';
 import { Alert, Button, ModalFooter, Text, toast, useModalContext } from '@lobehub/ui/base-ui';
 import { cssVar } from 'antd-style';
 import { memo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
 import { ensureElectronIpc } from '@/utils/electron/ipc';
 
 import {
@@ -25,6 +26,7 @@ interface ProviderImportContentProps {
 const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvider, preview }) => {
   const { t } = useTranslation('modelProvider');
   const { close } = useModalContext();
+  const { allowed: canManageProvider, reason } = usePermission('manage_provider_key');
   const [loading, setLoading] = useState(false);
   const payloadRef = useRef<ProviderImportPayload | undefined>(undefined);
   const retryCreatedProviderRef = useRef(false);
@@ -38,7 +40,7 @@ const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvid
   };
 
   const handleImport = async () => {
-    if (isBuiltinConflict) return;
+    if (isBuiltinConflict || !canManageProvider) return;
     setLoading(true);
 
     try {
@@ -125,15 +127,17 @@ const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvid
         <Button disabled={loading} onClick={handleCancel}>
           {t('providerImport.cancel')}
         </Button>
-        <Button
-          danger={isOverwrite}
-          disabled={isBuiltinConflict}
-          loading={loading}
-          type={'primary'}
-          onClick={handleImport}
-        >
-          {t(isOverwrite ? 'providerImport.confirmOverwrite' : 'providerImport.confirm')}
-        </Button>
+        <Tooltip title={canManageProvider ? undefined : reason}>
+          <Button
+            danger={isOverwrite}
+            disabled={isBuiltinConflict || !canManageProvider}
+            loading={loading}
+            type={'primary'}
+            onClick={handleImport}
+          >
+            {t(isOverwrite ? 'providerImport.confirmOverwrite' : 'providerImport.confirm')}
+          </Button>
+        </Tooltip>
       </ModalFooter>
     </Flexbox>
   );
