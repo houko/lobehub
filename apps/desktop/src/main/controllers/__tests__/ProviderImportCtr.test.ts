@@ -211,6 +211,18 @@ describe('ProviderImportController', () => {
         'invalid_payload',
       );
     });
+
+    it.each([
+      'Application/JSON',
+      'APPLICATION/JSON; charset=utf-8',
+      'Application/vnd.lobehub.provider-import+json; version=1',
+    ])('accepts case-insensitive callback media type %s', async (contentType) => {
+      mockUndiciFetch.mockResolvedValue(
+        jsonResponse(validPayload, { headers: { 'content-type': contentType } }),
+      );
+
+      await expect(fetchProviderImportPayload(new URL(callbackUrl))).resolves.toEqual(validPayload);
+    });
   });
 
   describe('handleImportRequest', () => {

@@ -1,4 +1,5 @@
 import type { ProviderImportPayload } from '@lobechat/electron-client-ipc';
+import type { AiProviderConfig, AiProviderDetailItem } from 'model-bank/aiProvider';
 import { AiProviderSourceEnum } from 'model-bank/aiProvider';
 
 import { mutate } from '@/libs/swr';
@@ -19,6 +20,31 @@ export class PartialProviderImportError extends Error {
 const isLoopbackEndpoint = (baseURL: string) => {
   const hostname = new URL(baseURL).hostname;
   return hostname === '127.0.0.1' || hostname === '[::1]';
+};
+
+const readExistingProviderConfig = (
+  provider: AiProviderDetailItem,
+): AiProviderConfig | undefined => {
+  const config = (provider as AiProviderDetailItem & { config?: AiProviderConfig }).config;
+  if (!config || typeof config !== 'object') return undefined;
+
+  return config;
+};
+
+const restoreOverwrittenProvider = async (existing: AiProviderDetailItem) => {
+  await aiProviderService.updateAiProvider(existing.id, {
+    description: existing.description,
+    logo: existing.logo,
+    name: existing.name,
+    settings: existing.settings,
+  });
+  await aiProviderService.updateAiProviderConfig(existing.id, {
+    checkModel: existing.checkModel,
+    config: readExistingProviderConfig(existing),
+    fetchOnClient: existing.fetchOnClient,
+    keyVaults: existing.keyVaults,
+  });
+  await aiProviderService.toggleProviderEnabled(existing.id, existing.enabled);
 };
 
 export const applyProviderImport = async (
@@ -46,6 +72,7 @@ export const applyProviderImport = async (
   };
 
   let createdProvider = false;
+  let writesComplete = false;
 
   try {
     if (existing) {
@@ -94,6 +121,8 @@ export const applyProviderImport = async (
       );
     }
 
+    writesComplete = true;
+
     const store = useAiInfraStore.getState();
     await Promise.all([
       mutate([AiProviderSwrKey.fetchAiProviderItem, provider.id]),
@@ -102,13 +131,28 @@ export const applyProviderImport = async (
       store.refreshAiProviderRuntimeState(),
     ]);
   } catch (error) {
+    if (writesComplete) throw error;
+
     if (createdProvider) {
       const partialProvider = await aiProviderService
         .getAiProviderById(provider.id)
-        .catch(() => undefined);
+        .catch((lookupError: unknown) => {
+          console.error('Failed to read the partial provider after import', lookupError);
+          return undefined;
+        });
       throw new PartialProviderImportError(partialProvider?.identity);
     }
-    if (existing) throw new PartialProviderImportError(existing.identity);
+
+    if (existing) {
+      try {
+        await restoreOverwrittenProvider(existing);
+      } catch (restoreError) {
+        console.error('Failed to restore provider after a partial import', restoreError);
+        throw new PartialProviderImportError(existing.identity);
+      }
+      throw error;
+    }
+
     throw error;
   }
 };

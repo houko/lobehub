@@ -204,7 +204,7 @@ export const fetchProviderImportPayload = async (callback: URL): Promise<Provide
 
   if (!response.ok) throw new ProviderImportFetchError('callback_failed');
 
-  const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim();
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
   if (
     contentType !== 'application/json' &&
     contentType !== 'application/vnd.lobehub.provider-import+json'

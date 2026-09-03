@@ -1,4 +1,5 @@
 import type { ProviderImportPayload } from '@lobechat/electron-client-ipc';
+import type { AiProviderDetailItem } from 'model-bank/aiProvider';
 import { AiProviderSourceEnum } from 'model-bank/aiProvider';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -254,7 +255,50 @@ describe('applyProviderImport', () => {
     expect(aiProviderService.updateAiProvider).not.toHaveBeenCalled();
   });
 
-  it('surfaces a partial overwrite with the identity needed for a safe retry', async () => {
+  it('rolls back an existing provider when a later import step fails', async () => {
+    vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
+      checkModel: 'old/model',
+      config: { enableResponseApi: true },
+      description: 'Old description',
+      enabled: false,
+      fetchOnClient: true,
+      id: 'example-provider',
+      identity: 'existing-provider-row',
+      keyVaults: { apiKey: 'old-secret', baseURL: 'https://old.example.com/v1' },
+      logo: 'https://old.example.com/logo.png',
+      name: 'Existing Provider',
+      settings: { sdkType: 'openai' },
+      source: AiProviderSourceEnum.Custom,
+    } as AiProviderDetailItem);
+    vi.mocked(aiModelService.batchUpdateAiModels).mockRejectedValueOnce(
+      new Error('temporary database failure'),
+    );
+
+    const error = await applyProviderImport(payload, {
+      expectedProviderIdentity: 'existing-provider-row',
+    }).catch((cause) => cause);
+
+    expect(error).toMatchObject({ message: 'temporary database failure' });
+    expect(error).not.toBeInstanceOf(PartialProviderImportError);
+    expect(aiProviderService.updateAiProvider).toHaveBeenLastCalledWith('example-provider', {
+      description: 'Old description',
+      logo: 'https://old.example.com/logo.png',
+      name: 'Existing Provider',
+      settings: { sdkType: 'openai' },
+    });
+    expect(aiProviderService.updateAiProviderConfig).toHaveBeenLastCalledWith('example-provider', {
+      checkModel: 'old/model',
+      config: { enableResponseApi: true },
+      fetchOnClient: true,
+      keyVaults: { apiKey: 'old-secret', baseURL: 'https://old.example.com/v1' },
+    });
+    expect(aiProviderService.toggleProviderEnabled).toHaveBeenLastCalledWith(
+      'example-provider',
+      false,
+    );
+  });
+
+  it('surfaces a partial overwrite when restoring the previous provider fails', async () => {
     vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
       enabled: true,
       id: 'example-provider',
@@ -263,7 +307,10 @@ describe('applyProviderImport', () => {
       settings: { sdkType: 'openai' },
       source: AiProviderSourceEnum.Custom,
     });
-    vi.mocked(aiProviderService.updateAiProviderConfig).mockRejectedValueOnce(
+    vi.mocked(aiProviderService.updateAiProvider)
+      .mockResolvedValueOnce(emptyQueryResult)
+      .mockRejectedValueOnce(new Error('restore failed'));
+    vi.mocked(aiModelService.batchUpdateAiModels).mockRejectedValueOnce(
       new Error('temporary database failure'),
     );
 
@@ -273,10 +320,23 @@ describe('applyProviderImport', () => {
 
     expect(error).toBeInstanceOf(PartialProviderImportError);
     expect(error).toMatchObject({ providerIdentity: 'existing-provider-row' });
+  });
+
+  it('does not roll back after provider writes have already succeeded', async () => {
+    vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
+      enabled: true,
+      id: 'example-provider',
+      identity: 'existing-provider-row',
+      name: 'Existing Provider',
+      settings: { sdkType: 'openai' },
+      source: AiProviderSourceEnum.Custom,
+    });
+    mocks.mutate.mockRejectedValueOnce(new Error('cache revalidation failed'));
 
     await expect(
-      applyProviderImport(payload, { expectedProviderIdentity: error.providerIdentity }),
-    ).resolves.toBeUndefined();
-    expect(aiProviderService.updateAiProviderConfig).toHaveBeenCalledTimes(2);
+      applyProviderImport(payload, { expectedProviderIdentity: 'existing-provider-row' }),
+    ).rejects.toThrow('cache revalidation failed');
+    expect(aiProviderService.updateAiProvider).toHaveBeenCalledTimes(1);
+    expect(aiProviderService.toggleProviderEnabled).toHaveBeenCalledTimes(1);
   });
 });
