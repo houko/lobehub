@@ -12,6 +12,11 @@ export class BuiltinProviderImportError extends Error {}
 export class ProviderOverwriteNotConfirmedError extends Error {}
 export class PartialProviderImportError extends Error {}
 
+const isLoopbackEndpoint = (baseURL: string) => {
+  const hostname = new URL(baseURL).hostname;
+  return hostname === '127.0.0.1' || hostname === '[::1]';
+};
+
 export const applyProviderImport = async (
   { models, provider }: ProviderImportPayload,
   options: { allowOverwrite: boolean },
@@ -59,7 +64,7 @@ export const applyProviderImport = async (
     await aiProviderService.updateAiProviderConfig(provider.id, {
       checkModel: provider.checkModel,
       config: { enableResponseApi: provider.enableResponsesApi ?? false },
-      fetchOnClient: provider.fetchOnClient ?? false,
+      fetchOnClient: isLoopbackEndpoint(provider.baseURL) || (provider.fetchOnClient ?? false),
       keyVaults: { apiKey: provider.apiKey, baseURL: provider.baseURL },
     });
     await aiProviderService.toggleProviderEnabled(provider.id, true);
@@ -73,6 +78,7 @@ export const applyProviderImport = async (
           source: 'remote',
           type: 'chat',
         })),
+        { forceType: 'chat' },
       );
       await aiModelService.batchToggleAiModels(
         provider.id,

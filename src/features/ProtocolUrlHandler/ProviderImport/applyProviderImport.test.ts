@@ -77,16 +77,20 @@ describe('applyProviderImport', () => {
       keyVaults: { apiKey: 'secret-key', baseURL: 'https://api.example.com/v1' },
     });
     expect(aiProviderService.toggleProviderEnabled).toHaveBeenCalledWith('example-provider', true);
-    expect(aiModelService.batchUpdateAiModels).toHaveBeenCalledWith('example-provider', [
-      {
-        contextWindowTokens: 128_000,
-        displayName: 'Example Model',
-        enabled: true,
-        id: 'example/model',
-        source: 'remote',
-        type: 'chat',
-      },
-    ]);
+    expect(aiModelService.batchUpdateAiModels).toHaveBeenCalledWith(
+      'example-provider',
+      [
+        {
+          contextWindowTokens: 128_000,
+          displayName: 'Example Model',
+          enabled: true,
+          id: 'example/model',
+          source: 'remote',
+          type: 'chat',
+        },
+      ],
+      { forceType: 'chat' },
+    );
     expect(aiModelService.batchToggleAiModels).toHaveBeenCalledWith(
       'example-provider',
       ['example/model'],
@@ -131,6 +135,24 @@ describe('applyProviderImport', () => {
       }),
     );
   });
+
+  it.each(['http://127.0.0.1:11434/v1', 'http://[::1]:11434/v1'])(
+    'forces client-side fetches for loopback endpoint %s',
+    async (baseURL) => {
+      await applyProviderImport(
+        {
+          ...payload,
+          provider: { ...payload.provider, baseURL, fetchOnClient: false },
+        },
+        { allowOverwrite: false },
+      );
+
+      expect(aiProviderService.updateAiProviderConfig).toHaveBeenCalledWith(
+        'example-provider',
+        expect.objectContaining({ fetchOnClient: true }),
+      );
+    },
+  );
 
   it('revalidates the imported provider detail and model list caches', async () => {
     await applyProviderImport(payload, { allowOverwrite: false });
