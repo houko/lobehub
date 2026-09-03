@@ -19,7 +19,7 @@ export interface ProtocolBroadcastEvents {
   }) => void;
   /**
    * Provider import request event.
-   * The main process only emits ready payloads after a bounded loopback callback succeeds.
+   * Ready previews and callback errors stay pending until the renderer handles them.
    */
   providerImportRequest: (data: ProviderImportRequest) => void;
 }

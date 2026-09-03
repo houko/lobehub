@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { PropsWithChildren, ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -97,5 +97,35 @@ describe('ProviderImportContent', () => {
 
     expect(mocks.consume).not.toHaveBeenCalled();
     expect(mocks.applyProviderImport).not.toHaveBeenCalled();
+  });
+
+  it('binds overwrite confirmation to the reviewed provider identity', async () => {
+    mocks.permission.allowed = true;
+    mocks.consume.mockResolvedValue({
+      models: [],
+      provider: { apiKey: 'secret', ...preview.provider },
+      version: 1,
+    });
+    mocks.applyProviderImport.mockResolvedValue(undefined);
+
+    render(
+      <ProviderImportContent
+        preview={preview}
+        existingProvider={{
+          id: 'example-provider',
+          identity: 'reviewed-provider-row',
+          name: 'Existing Provider',
+          source: 'custom',
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'providerImport.confirmOverwrite' }));
+
+    await waitFor(() => {
+      expect(mocks.applyProviderImport).toHaveBeenCalledWith(expect.any(Object), {
+        expectedProviderIdentity: 'reviewed-provider-row',
+      });
+    });
   });
 });

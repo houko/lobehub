@@ -29,7 +29,6 @@ import TabCacheBridges from '@/features/Electron/titlebar/TabBar/TabCacheBridges
 import TitleBar from '@/features/Electron/titlebar/TitleBar';
 import HotkeyHelperPanel from '@/features/HotkeyHelperPanel';
 import NavPanelShell from '@/features/NavPanel/Shell';
-import ProtocolUrlHandler from '@/features/ProtocolUrlHandler';
 import { DndContextWrapper } from '@/features/ResourceManager/DndContextWrapper';
 import { usePlatform } from '@/hooks/usePlatform';
 import CmdkLazy from '@/layout/GlobalProvider/CmdkLazy';
@@ -71,8 +70,6 @@ const Layout: FC = () => {
         </Suspense>
         <AuthRequiredModal />
         <ZoomHUD />
-        <ProtocolUrlHandler />
-
         <Suspense fallback={null}>
           <TitleBar />
         </Suspense>

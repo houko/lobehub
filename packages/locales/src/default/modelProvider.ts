@@ -443,9 +443,11 @@ export default {
   'providerImport.error.builtinConflict':
     'This provider ID belongs to a built-in provider and cannot be replaced',
   'providerImport.error.callback_failed': 'Could not retrieve the provider configuration',
+  'providerImport.error.expired': 'This provider import has expired. Start it again.',
   'providerImport.error.invalid_callback': 'The provider import link is invalid or has expired',
   'providerImport.error.invalid_payload': 'The provider configuration is invalid',
-  'providerImport.error.expired': 'This provider import has expired. Start it again.',
+  'providerImport.error.partial':
+    'The provider was only partially updated. Keep this window open and retry to finish the import.',
   'providerImport.error.providerChanged':
     'The provider changed while you were reviewing it. Start the import again.',
   'providerImport.modelCount': '{{count}} model',

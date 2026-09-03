@@ -52,13 +52,16 @@ const ProtocolUrlHandler = () => {
   const handleProviderImportRequest = useCallback(
     (request: ProviderImportRequest) => {
       if (request.status === 'error') {
+        if (handledProviderImportIds.has(request.requestId)) return;
+        handledProviderImportIds.add(request.requestId);
+        void ensureElectronIpc().providerImport.cancel(request.requestId);
         toast.error(t(providerImportErrorKeys[request.errorCode], { ns: 'modelProvider' }));
         return;
       }
 
       showProviderImport(request.preview);
     },
-    [showProviderImport],
+    [handledProviderImportIds, showProviderImport],
   );
 
   useWatchBroadcast('mcpInstallRequest', handleMcpInstallRequest);
@@ -69,8 +72,8 @@ const ProtocolUrlHandler = () => {
 
     void ensureElectronIpc()
       .providerImport.listPending()
-      .then((previews: ProviderImportPreview[]) => {
-        if (active) previews.forEach(showProviderImport);
+      .then((requests: ProviderImportRequest[]) => {
+        if (active) requests.forEach(handleProviderImportRequest);
       })
       .catch((error: unknown) => {
         console.error('Failed to list pending provider imports', error);
@@ -79,7 +82,7 @@ const ProtocolUrlHandler = () => {
     return () => {
       active = false;
     };
-  }, [showProviderImport]);
+  }, [handleProviderImportRequest]);
 
   return <PluginInstallConfirmModal installRequest={installRequest} onComplete={handleComplete} />;
 };

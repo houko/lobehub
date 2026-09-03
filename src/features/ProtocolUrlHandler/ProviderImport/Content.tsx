@@ -29,7 +29,7 @@ const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvid
   const { allowed: canManageProvider, reason } = usePermission('manage_provider_key');
   const [loading, setLoading] = useState(false);
   const payloadRef = useRef<ProviderImportPayload | undefined>(undefined);
-  const retryCreatedProviderRef = useRef(false);
+  const retryProviderIdentityRef = useRef<string | undefined>(undefined);
   const { modelCount, provider, requestId } = preview;
   const isBuiltinConflict = existingProvider?.source === 'builtin';
   const isOverwrite = existingProvider?.source === 'custom';
@@ -54,12 +54,14 @@ const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvid
 
       payloadRef.current = payload;
       await applyProviderImport(payload, {
-        allowOverwrite: isOverwrite || retryCreatedProviderRef.current,
+        expectedProviderIdentity: existingProvider?.identity ?? retryProviderIdentityRef.current,
       });
       toast.success(t('providerImport.success', { name: provider.name }));
       close();
     } catch (error) {
-      if (error instanceof PartialProviderImportError) retryCreatedProviderRef.current = true;
+      if (error instanceof PartialProviderImportError) {
+        retryProviderIdentityRef.current = error.providerIdentity;
+      }
       console.error('Failed to import provider configuration', error);
       toast.error(
         t(
@@ -67,7 +69,9 @@ const ProviderImportContent = memo<ProviderImportContentProps>(({ existingProvid
             ? 'providerImport.error.builtinConflict'
             : error instanceof ProviderOverwriteNotConfirmedError
               ? 'providerImport.error.providerChanged'
-              : 'providerImport.error.apply',
+              : error instanceof PartialProviderImportError
+                ? 'providerImport.error.partial'
+                : 'providerImport.error.apply',
         ),
       );
     } finally {

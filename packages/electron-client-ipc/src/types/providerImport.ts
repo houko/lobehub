@@ -33,6 +33,7 @@ export type ProviderImportErrorCode = 'callback_failed' | 'invalid_callback' | '
 export type ProviderImportRequest =
   | {
       errorCode: ProviderImportErrorCode;
+      requestId: string;
       status: 'error';
     }
   | {

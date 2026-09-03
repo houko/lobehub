@@ -10,7 +10,11 @@ import { AiProviderSwrKey } from '@/store/aiInfra/slices/aiProvider/action';
 
 export class BuiltinProviderImportError extends Error {}
 export class ProviderOverwriteNotConfirmedError extends Error {}
-export class PartialProviderImportError extends Error {}
+export class PartialProviderImportError extends Error {
+  constructor(readonly providerIdentity?: string) {
+    super();
+  }
+}
 
 const isLoopbackEndpoint = (baseURL: string) => {
   const hostname = new URL(baseURL).hostname;
@@ -19,14 +23,17 @@ const isLoopbackEndpoint = (baseURL: string) => {
 
 export const applyProviderImport = async (
   { models, provider }: ProviderImportPayload,
-  options: { allowOverwrite: boolean },
+  options: { expectedProviderIdentity?: string },
 ) => {
   const existing = await aiProviderService.getAiProviderById(provider.id);
 
   if (existing?.source === AiProviderSourceEnum.Builtin) {
     throw new BuiltinProviderImportError();
   }
-  if (existing && !options.allowOverwrite) {
+  if (
+    existing &&
+    (!options.expectedProviderIdentity || existing.identity !== options.expectedProviderIdentity)
+  ) {
     throw new ProviderOverwriteNotConfirmedError();
   }
 
@@ -95,7 +102,13 @@ export const applyProviderImport = async (
       store.refreshAiProviderRuntimeState(),
     ]);
   } catch (error) {
-    if (createdProvider) throw new PartialProviderImportError();
+    if (createdProvider) {
+      const partialProvider = await aiProviderService
+        .getAiProviderById(provider.id)
+        .catch(() => undefined);
+      throw new PartialProviderImportError(partialProvider?.identity);
+    }
+    if (existing) throw new PartialProviderImportError(existing.identity);
     throw error;
   }
 };

@@ -60,7 +60,7 @@ describe('applyProviderImport', () => {
   });
 
   it('creates, enables, and populates a new provider', async () => {
-    await applyProviderImport(payload, { allowOverwrite: false });
+    await applyProviderImport(payload, {});
 
     expect(aiProviderService.createAiProvider).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -102,6 +102,7 @@ describe('applyProviderImport', () => {
     vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
       enabled: true,
       id: 'example-provider',
+      identity: 'provider-row-1',
       name: 'Old Name',
       settings: { defaultShowBrowserRequest: true, sdkType: 'router' },
       source: AiProviderSourceEnum.Custom,
@@ -112,7 +113,7 @@ describe('applyProviderImport', () => {
         ...payload,
         provider: { ...payload.provider, enableResponsesApi: true, fetchOnClient: true },
       },
-      { allowOverwrite: true },
+      { expectedProviderIdentity: 'provider-row-1' },
     );
 
     expect(aiProviderService.createAiProvider).not.toHaveBeenCalled();
@@ -144,7 +145,7 @@ describe('applyProviderImport', () => {
           ...payload,
           provider: { ...payload.provider, baseURL, fetchOnClient: false },
         },
-        { allowOverwrite: false },
+        {},
       );
 
       expect(aiProviderService.updateAiProviderConfig).toHaveBeenCalledWith(
@@ -155,7 +156,7 @@ describe('applyProviderImport', () => {
   );
 
   it('revalidates the imported provider detail and model list caches', async () => {
-    await applyProviderImport(payload, { allowOverwrite: false });
+    await applyProviderImport(payload, {});
 
     expect(mocks.mutate).toHaveBeenCalledWith([
       AiProviderSwrKey.fetchAiProviderItem,
@@ -168,6 +169,7 @@ describe('applyProviderImport', () => {
     vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
       enabled: true,
       id: 'openai',
+      identity: 'builtin-row',
       name: 'OpenAI',
       settings: { sdkType: 'openai' },
       source: AiProviderSourceEnum.Builtin,
@@ -176,7 +178,7 @@ describe('applyProviderImport', () => {
     await expect(
       applyProviderImport(
         { ...payload, provider: { ...payload.provider, id: 'openai' } },
-        { allowOverwrite: true },
+        { expectedProviderIdentity: 'builtin-row' },
       ),
     ).rejects.toBeInstanceOf(BuiltinProviderImportError);
     expect(aiProviderService.updateAiProvider).not.toHaveBeenCalled();
@@ -188,12 +190,13 @@ describe('applyProviderImport', () => {
     vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
       enabled: true,
       id: 'example-provider',
+      identity: 'provider-row-2',
       name: 'Existing Provider',
       settings: { sdkType: 'openai' },
       source: AiProviderSourceEnum.Custom,
     });
 
-    await expect(applyProviderImport(payload, { allowOverwrite: false })).rejects.toBeInstanceOf(
+    await expect(applyProviderImport(payload, {})).rejects.toBeInstanceOf(
       ProviderOverwriteNotConfirmedError,
     );
     expect(aiProviderService.updateAiProvider).not.toHaveBeenCalled();
@@ -201,24 +204,79 @@ describe('applyProviderImport', () => {
   });
 
   it('marks a newly created partial import as safe to retry idempotently', async () => {
+    vi.mocked(aiProviderService.getAiProviderById)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        enabled: false,
+        id: 'example-provider',
+        identity: 'partial-provider-row',
+        name: 'Example Provider',
+        settings: { sdkType: 'openai' },
+        source: AiProviderSourceEnum.Custom,
+      });
     vi.mocked(aiProviderService.updateAiProviderConfig).mockRejectedValueOnce(
       new Error('temporary database failure'),
     );
 
-    await expect(applyProviderImport(payload, { allowOverwrite: false })).rejects.toBeInstanceOf(
-      PartialProviderImportError,
-    );
+    const firstAttemptError = await applyProviderImport(payload, {}).catch((error) => error);
+    expect(firstAttemptError).toBeInstanceOf(PartialProviderImportError);
+    expect(firstAttemptError).toMatchObject({ providerIdentity: 'partial-provider-row' });
 
     vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
       enabled: false,
       id: 'example-provider',
+      identity: 'partial-provider-row',
       name: 'Example Provider',
       settings: { sdkType: 'openai' },
       source: AiProviderSourceEnum.Custom,
     });
 
-    await expect(applyProviderImport(payload, { allowOverwrite: true })).resolves.toBeUndefined();
+    await expect(
+      applyProviderImport(payload, { expectedProviderIdentity: 'partial-provider-row' }),
+    ).resolves.toBeUndefined();
     expect(aiProviderService.updateAiProviderConfig).toHaveBeenCalledTimes(2);
     expect(aiModelService.batchUpdateAiModels).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses overwrite consent when the provider ID now belongs to another row', async () => {
+    vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
+      enabled: true,
+      id: 'example-provider',
+      identity: 'replacement-provider-row',
+      name: 'Replacement Provider',
+      settings: { sdkType: 'openai' },
+      source: AiProviderSourceEnum.Custom,
+    });
+
+    await expect(
+      applyProviderImport(payload, { expectedProviderIdentity: 'reviewed-provider-row' }),
+    ).rejects.toBeInstanceOf(ProviderOverwriteNotConfirmedError);
+    expect(aiProviderService.updateAiProvider).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a partial overwrite with the identity needed for a safe retry', async () => {
+    vi.mocked(aiProviderService.getAiProviderById).mockResolvedValue({
+      enabled: true,
+      id: 'example-provider',
+      identity: 'existing-provider-row',
+      name: 'Existing Provider',
+      settings: { sdkType: 'openai' },
+      source: AiProviderSourceEnum.Custom,
+    });
+    vi.mocked(aiProviderService.updateAiProviderConfig).mockRejectedValueOnce(
+      new Error('temporary database failure'),
+    );
+
+    const error = await applyProviderImport(payload, {
+      expectedProviderIdentity: 'existing-provider-row',
+    }).catch((cause) => cause);
+
+    expect(error).toBeInstanceOf(PartialProviderImportError);
+    expect(error).toMatchObject({ providerIdentity: 'existing-provider-row' });
+
+    await expect(
+      applyProviderImport(payload, { expectedProviderIdentity: error.providerIdentity }),
+    ).resolves.toBeUndefined();
+    expect(aiProviderService.updateAiProviderConfig).toHaveBeenCalledTimes(2);
   });
 });

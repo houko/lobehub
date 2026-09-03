@@ -14,9 +14,19 @@ import type { ExistingProviderPreview } from './types';
 
 export const createProviderImportModal = async (preview: ProviderImportPreview) => {
   const existing = await aiProviderService.getAiProviderById(preview.provider.id);
-  const existingProvider: ExistingProviderPreview | undefined = existing
-    ? { id: existing.id, name: existing.name, source: existing.source }
-    : undefined;
+  const existingProvider: ExistingProviderPreview | undefined =
+    existing && existing.identity
+      ? {
+          id: existing.id,
+          identity: existing.identity,
+          name: existing.name,
+          source: existing.source,
+        }
+      : undefined;
+
+  if (existing && !existingProvider) {
+    throw new Error('Existing provider is missing its stable identity');
+  }
 
   return createModal({
     content: <ProviderImportContent existingProvider={existingProvider} preview={preview} />,

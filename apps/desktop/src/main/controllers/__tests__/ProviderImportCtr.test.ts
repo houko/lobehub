@@ -238,7 +238,7 @@ describe('ProviderImportController', () => {
       expect(JSON.stringify(request)).not.toContain('secret-key');
 
       const requestId = request.preview.requestId;
-      expect(controller.listPending()).toEqual([request.preview]);
+      expect(controller.listPending()).toEqual([request]);
       expect(controller.consume(requestId)).toEqual(validPayload);
       expect(controller.consume(requestId)).toBeUndefined();
     });
@@ -250,11 +250,34 @@ describe('ProviderImportController', () => {
         controller['handleImportRequest']({ callback: 'https://example.com/config' }),
       ).resolves.toBe(true);
       expect(mockUndiciFetch).not.toHaveBeenCalled();
-      expect(mockBrowserManager.broadcastToWindow).toHaveBeenCalledWith(
-        'app',
-        'providerImportRequest',
-        { errorCode: 'invalid_callback', status: 'error' },
-      );
+      const request = mockBrowserManager.broadcastToWindow.mock.calls[0][2];
+      expect(request).toEqual({
+        errorCode: 'invalid_callback',
+        requestId: expect.any(String),
+        status: 'error',
+      });
+      expect(controller.listPending()).toEqual([request]);
+
+      controller.cancel(request.requestId);
+      expect(controller.listPending()).toEqual([]);
+    });
+
+    it('retains callback failures until the renderer acknowledges them', async () => {
+      mockUndiciFetch.mockRejectedValue(new Error('callback server unavailable'));
+      const controller = new ProviderImportController(mockApp);
+
+      await controller['handleImportRequest']({ callback: callbackUrl });
+
+      const request = mockBrowserManager.broadcastToWindow.mock.calls[0][2];
+      expect(request).toEqual({
+        errorCode: 'callback_failed',
+        requestId: expect.any(String),
+        status: 'error',
+      });
+      expect(controller.listPending()).toEqual([request]);
+
+      controller.cancel(request.requestId);
+      expect(controller.listPending()).toEqual([]);
     });
 
     it('cancels a pending secret without returning it to the renderer', async () => {

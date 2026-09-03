@@ -177,6 +177,7 @@
   "providerImport.error.expired": "本次服务商导入已过期，请重新发起。",
   "providerImport.error.invalid_callback": "服务商导入链接无效或已过期",
   "providerImport.error.invalid_payload": "服务商配置无效",
+  "providerImport.error.partial": "服务商仅完成了部分更新。请保持此窗口打开并重试，以完成导入。",
   "providerImport.error.providerChanged": "你确认期间服务商状态已变化，请重新发起导入。",
   "providerImport.modelCount": "{{count}} 个模型",
   "providerImport.modelCount_other": "{{count}} 个模型",

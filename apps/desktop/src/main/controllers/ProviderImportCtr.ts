@@ -233,9 +233,14 @@ export default class ProviderImportController extends ControllerModule {
     string,
     { expiresAt: number; payload: ProviderImportPayload }
   >();
+  private readonly pendingErrors = new Map<
+    string,
+    { errorCode: ProviderImportErrorCode; expiresAt: number }
+  >();
 
-  private deletePendingImport(requestId: string) {
+  private deletePendingRequest(requestId: string) {
     this.pendingImports.delete(requestId);
+    this.pendingErrors.delete(requestId);
   }
 
   private storePendingImport(payload: ProviderImportPayload): ProviderImportPreview {
@@ -243,43 +248,66 @@ export default class ProviderImportController extends ControllerModule {
     const expiresAt = Date.now() + PENDING_IMPORT_TTL_MS;
     this.pendingImports.set(requestId, { expiresAt, payload });
 
-    const timeout = setTimeout(() => this.deletePendingImport(requestId), PENDING_IMPORT_TTL_MS);
+    const timeout = setTimeout(() => this.deletePendingRequest(requestId), PENDING_IMPORT_TTL_MS);
     timeout.unref?.();
 
     const { apiKey: _apiKey, ...provider } = payload.provider;
     return { modelCount: payload.models.length, provider, requestId };
   }
 
+  private storePendingError(errorCode: ProviderImportErrorCode): ProviderImportRequest {
+    const requestId = randomUUID();
+    const expiresAt = Date.now() + PENDING_IMPORT_TTL_MS;
+    this.pendingErrors.set(requestId, { errorCode, expiresAt });
+
+    const timeout = setTimeout(() => this.deletePendingRequest(requestId), PENDING_IMPORT_TTL_MS);
+    timeout.unref?.();
+
+    return { errorCode, requestId, status: 'error' };
+  }
+
   @IpcMethod()
   public cancel(requestId: string): void {
-    this.deletePendingImport(requestId);
+    this.deletePendingRequest(requestId);
   }
 
   @IpcMethod()
   public consume(requestId: string): ProviderImportPayload | undefined {
     const pending = this.pendingImports.get(requestId);
-    this.deletePendingImport(requestId);
+    this.deletePendingRequest(requestId);
 
     if (!pending || pending.expiresAt <= Date.now()) return;
     return pending.payload;
   }
 
   @IpcMethod()
-  public listPending(): ProviderImportPreview[] {
+  public listPending(): ProviderImportRequest[] {
     const now = Date.now();
-    const previews: ProviderImportPreview[] = [];
+    const requests: ProviderImportRequest[] = [];
 
     for (const [requestId, pending] of this.pendingImports) {
       if (pending.expiresAt <= now) {
-        this.deletePendingImport(requestId);
+        this.deletePendingRequest(requestId);
         continue;
       }
 
       const { apiKey: _apiKey, ...provider } = pending.payload.provider;
-      previews.push({ modelCount: pending.payload.models.length, provider, requestId });
+      requests.push({
+        preview: { modelCount: pending.payload.models.length, provider, requestId },
+        status: 'ready',
+      });
     }
 
-    return previews;
+    for (const [requestId, pending] of this.pendingErrors) {
+      if (pending.expiresAt <= now) {
+        this.deletePendingRequest(requestId);
+        continue;
+      }
+
+      requests.push({ errorCode: pending.errorCode, requestId, status: 'error' });
+    }
+
+    return requests;
   }
 
   @protocolHandler('import')
@@ -290,7 +318,7 @@ export default class ProviderImportController extends ControllerModule {
     const callback = params.callback ? parseProviderImportCallback(params.callback) : undefined;
 
     if (!callback) {
-      request = { errorCode: 'invalid_callback', status: 'error' };
+      request = this.storePendingError('invalid_callback');
     } else {
       try {
         const payload = await fetchProviderImportPayload(callback);
@@ -299,7 +327,7 @@ export default class ProviderImportController extends ControllerModule {
         const errorCode =
           error instanceof ProviderImportFetchError ? error.code : ('callback_failed' as const);
         logger.warn('Provider import callback failed', { errorCode });
-        request = { errorCode, status: 'error' };
+        request = this.storePendingError(errorCode);
       }
     }
 
