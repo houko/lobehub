@@ -32,7 +32,7 @@ import ProcessControl from './ProcessControl';
 
 /**
  * The goal detail page. A goal is a Goal Graph — it owns its own decomposition
- * and dispatches Work Tasks — so the page reads the graph snapshot directly and
+ * and dispatches its own Tasks — so the page reads the graph snapshot directly and
  * the route is keyed by the `goals` row id.
  *
  * Every header metric is a drill-down entry: clicking one opens its detail in
@@ -116,6 +116,10 @@ const GoalDetailPage = memo<GoalDetailPageProps>(({ agentId, goalId }) => {
   const [chatOpen, setChatOpen] = useState(true);
   const openGoalMetric = useChatStore((s) => s.openGoalMetric);
   const clearPortalStack = useChatStore((s) => s.clearPortalStack);
+
+  // While the exploration map runs fullscreen its overlay carries the portal
+  // panel; ours unmounts so exactly one PortalContent is alive at a time.
+  const [graphFullscreen, setGraphFullscreen] = useState(false);
 
   // Same per-view width grammar as the conversation portal, but remembered
   // under the 'goal' scope: resizing here never affects the chat surface.
@@ -274,7 +278,11 @@ const GoalDetailPage = memo<GoalDetailPageProps>(({ agentId, goalId }) => {
               )}
             </Flexbox>
 
-            <ProcessControl goalId={goal.id} />
+            <ProcessControl
+              goalId={goal.id}
+              graphFullscreen={graphFullscreen}
+              onGraphFullscreenChange={setGraphFullscreen}
+            />
           </WideScreenContainer>
         </Flexbox>
       </Flexbox>
@@ -285,7 +293,7 @@ const GoalDetailPage = memo<GoalDetailPageProps>(({ agentId, goalId }) => {
           open, the panel hosts the conversation with the goal's responsible
           agent so a user can just ask about progress. */}
       <RightPanel
-        expand={showPortal || (chatOpen && !!agentId)}
+        expand={(showPortal || (chatOpen && !!agentId)) && !graphFullscreen}
         maxWidth={maxWidth}
         minWidth={minWidth}
         width={width}
@@ -295,7 +303,7 @@ const GoalDetailPage = memo<GoalDetailPageProps>(({ agentId, goalId }) => {
           setChatOpen(next);
         }}
       >
-        {showPortal ? (
+        {graphFullscreen ? null : showPortal ? (
           <PortalContent />
         ) : agentId ? (
           <GoalChat agentId={agentId} goalId={goalId} onCollapse={() => setChatOpen(false)} />
